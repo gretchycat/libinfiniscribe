@@ -121,6 +121,36 @@ class TextChunkReader(source: ByteSource, val charset: Charset = Charsets.UTF_8,
             warnings = source.warnings + if (whole) emptyList() else listOf("Document window is not the complete source"))
         return TextChunk(TextDocument(text, bytes.copyOf(consumed), !whole, metadata), start, next, hasNext)
     }
+    /** Decode the adjacent preceding window; end at the known character boundary without rescanning the prefix. */
+    @Synchronized fun readPrevious(beforeOffset: Long, maxBytes: Int = 16 * 1024, maxLines: Int = 256): TextChunk {
+        require(beforeOffset > 0 && maxBytes in 8..(64 * 1024) && maxLines in 1..4096)
+        val name = charset.name().uppercase()
+        var start = maxOf(0L, beforeOffset - maxBytes)
+        val step = if (name == "UTF-16LE" || name == "UTF-16BE") 2 else 1
+        var position = beforeOffset - step
+        var lines = 0
+        // A final LF belongs to the preceding chunk, rather than an empty extra window.
+        while (position >= start) {
+            val newline = if (step == 1) chunks.byteAt(position) == 10 else {
+                val a = chunks.byteAt(position); val b = chunks.byteAt(position + 1)
+                if (name == "UTF-16LE") a == 10 && b == 0 else a == 0 && b == 10
+            }
+            if (newline && position + step != beforeOffset && ++lines == maxLines) { start = position + step; break }
+            position -= step
+        }
+        // read() aligns a partial leading UTF sequence. The end is an existing reader boundary.
+        return read(start, (beforeOffset - start).toInt().coerceAtLeast(8), 4096).let { result ->
+            if (result.nextOffset != beforeOffset) {
+                // Tiny final windows must not consume bytes beyond the requested boundary.
+                val bytes = chunks.bytes(result.start, (beforeOffset - result.start).toInt())
+                val text = String(bytes, charset)
+                val metadata = result.document.metadata.copy(attributes = result.document.metadata.attributes + mapOf(
+                    "complete" to "false", "nextOffset" to beforeOffset.toString(), "utf16CodeUnits" to text.length.toString()),
+                    provenance = result.document.metadata.provenance.copy(length = bytes.size.toLong()), verification = Verification.PROVISIONAL)
+                TextChunk(TextDocument(text, bytes, true, metadata), result.start, beforeOffset, chunks.byteAt(beforeOffset) != -1)
+            } else result
+        }
+    }
     /** Explicit forward search scans windows with bounded memory, including matches across a window edge. */
     @Synchronized fun findNext(query: String, offset: Long, previous: TextChunk? = null): TextChunk? {
         require(query.isNotEmpty())
@@ -146,8 +176,9 @@ class TextChunkReader(source: ByteSource, val charset: Charset = Charsets.UTF_8,
     @Synchronized override fun close() = chunks.close()
 }
 
-data class TableChunk(val table: TableDocument, val rowIndices: List<Long>, val start: Long,
-    val nextOffset: Long, val nextRowIndex: Long, val hasNext: Boolean, val originalBytes: ByteArray?)
+data class TableChunk @JvmOverloads constructor(val table: TableDocument, val rowIndices: List<Long>, val start: Long,
+    val nextOffset: Long, val nextRowIndex: Long, val hasNext: Boolean, val originalBytes: ByteArray?,
+    val firstRowIndex: Long = rowIndices.firstOrNull() ?: nextRowIndex)
 
 /** UTF-8 CSV/TSV windows end at real record boundaries, including escaped quotes and quoted newlines. */
 class TableChunkReader(source: ByteSource, private val fileName: String = "",
@@ -209,7 +240,61 @@ class TableChunkReader(source: ByteSource, private val fileName: String = "",
             verification = if (whole) Verification.UNKNOWN else Verification.PROVISIONAL,
             warnings = source.warnings + if (whole) emptyList() else listOf("Table window is not the complete source"))
         return TableChunk(TableDocument(rows, delimiter, metadata), indices, offset, position, rowIndex, more,
-            if (whole) original!!.toByteArray() else null)
+            if (whole) original!!.toByteArray() else null, firstRowIndex)
+    }
+    /** Walk records backward from a known outside-quote boundary, with bounded reads and no global index. */
+    @Synchronized fun readPrevious(beforeOffset: Long, endRowIndex: Long, maxRows: Int = 50,
+        filter: String = ""): TableChunk {
+        require(beforeOffset > 0 && endRowIndex >= 0 && maxRows in 1..500)
+        cancellation.check()
+        val delimiter = selectedDelimiter ?: throw IOException("Read the first CSV window before moving backward")
+        var position = beforeOffset; var rowIndex = endRowIndex
+        val records = mutableListOf<Pair<Long, List<String>>>()
+        while (position > 0 && records.size < maxRows && beforeOffset - position < 64 * 1024) {
+            cancellation.check()
+            var cursor = position
+            if (chunks.byteAt(cursor - 1) == 10) { cursor--; if (cursor > 0 && chunks.byteAt(cursor - 1) == 13) cursor-- }
+            else if (chunks.byteAt(cursor - 1) == 13) cursor--
+            var quoted = false
+            while (cursor > 0) {
+                val b = chunks.byteAt(cursor - 1)
+                if (b == 34) quoted = !quoted
+                if (!quoted && (b == 10 || b == 13)) break
+                cursor--
+                if (position - cursor > 8L * 1024 * 1024) throw IOException("A CSV record exceeds the existing 8 MiB document budget")
+            }
+            val bytes = chunks.bytes(cursor, (position - cursor).toInt())
+            val parsed = DelimitedText.parseCsv(String(bytes, Charsets.UTF_8), delimiter, cancellation)
+            rowIndex -= parsed.size
+            if (rowIndex < 0) throw IOException("CSV record cursor no longer matches the source")
+            parsed.forEachIndexed { index, row ->
+                val number = rowIndex + index
+                if (number == 0L) firstRow = row
+                if (number == 0L || filter.isEmpty() || row.any { it.contains(filter, ignoreCase = true) }) records.add(0, number to row)
+            }
+            position = cursor
+        }
+        val rows = records.map { it.second }; val source = sourceMetadata
+        val more = chunks.byteAt(beforeOffset) != -1
+        val whole = position == 0L && !more && filter.isEmpty()
+        val metadata = TableDocuments.tableMetadata(source, delimiter).copy(
+            attributes = mapOf("storage" to "table-document", "complete" to whole.toString(), "sourceCharset" to "UTF-8",
+                "sourceOffset" to position.toString(), "nextOffset" to beforeOffset.toString(), "rowCount" to rows.size.toString(),
+                "columnCount" to (rows.maxOfOrNull { it.size } ?: 0).toString(), "delimiter" to delimiter.toString(),
+                "access" to if (supportsRandomAccess) "positional" else "sequential"),
+            provenance = source.provenance.copy(offset = position, length = beforeOffset - position,
+                transformations = source.provenance.transformations + "scribe.table.chunk"),
+            verification = if (whole) Verification.UNKNOWN else Verification.PROVISIONAL,
+            warnings = source.warnings + if (whole) emptyList() else listOf("Table window is not the complete source"))
+        return TableChunk(TableDocument(rows, delimiter, metadata), records.map { it.first }, position, beforeOffset,
+            endRowIndex, more, if (whole) chunks.bytes(position, (beforeOffset - position).toInt()) else null, rowIndex)
+    }
+    @Synchronized fun findPreviousRows(beforeOffset: Long, endRowIndex: Long, filter: String = ""): TableChunk {
+        var chunk = readPrevious(beforeOffset, endRowIndex, filter = filter)
+        while (filter.isNotEmpty() && chunk.start > 0 && chunk.rowIndices.none { it != 0L }) {
+            chunk = readPrevious(chunk.start, chunk.firstRowIndex, filter = filter)
+        }
+        return chunk
     }
     /** A sparse filter scans successive bounded windows rather than allocating the whole source. */
     @Synchronized fun findRows(offset: Long = 0, firstRowIndex: Long = 0, filter: String = ""): TableChunk {

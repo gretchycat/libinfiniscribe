@@ -158,4 +158,109 @@ class DocumentChunksTest {
             assertEquals("false", found.table.metadata.attributes["complete"])
         }
     }
+
+    @Test fun precedingTextWindowsMeetExactlyAndRespectUnicodeAndLineBudgets() {
+        for (charset in listOf(Charsets.UTF_8, Charsets.UTF_16LE, Charsets.UTF_16BE)) {
+            val value = (1..2000).joinToString("\n") { "line $it 🎵 é" }
+            TextChunkReader(Positional(value.toByteArray(charset)), charset).use { reader ->
+                val first = reader.read()
+                val next = reader.read(first.nextOffset)
+                val previous = reader.readPrevious(next.start)
+                assertEquals(next.start, previous.nextOffset)
+                assertFalse(previous.document.text.contains('\ufffd'))
+                assertTrue(previous.document.text.count { it == '\n' } <= 256)
+                val bytes = value.toByteArray(charset).copyOfRange(previous.start.toInt(), previous.nextOffset.toInt())
+                assertEquals(String(bytes, charset), previous.document.text)
+                val tiny = reader.readPrevious(if (charset == Charsets.UTF_8) 5 else 2)
+                assertEquals(if (charset == Charsets.UTF_8) 5L else 2L, tiny.nextOffset)
+            }
+        }
+    }
+    @Test fun reverseCsvWindowsRetainEscapedQuotesNewlinesBlankRecordsAndLogicalIndices() {
+        val value = "id,notes\r\n" + (1..140).joinToString("") { "$it,\"line\nwith \"\"quotes\"\"\"\r\n\r\n" }
+        TableChunkReader(Positional(value.toByteArray()), "data.csv").use { reader ->
+            val first = reader.read(); val second = reader.read(first.nextOffset, first.nextRowIndex)
+            val previous = reader.readPrevious(second.start, second.firstRowIndex)
+            assertEquals(second.start, previous.nextOffset)
+            assertEquals(first.table.rows, previous.table.rows)
+            assertEquals(first.rowIndices, previous.rowIndices)
+            assertEquals(0L, previous.firstRowIndex)
+            assertNull(previous.originalBytes)
+        }
+    }
+    @Test fun reverseCsvHandlesCrOnlyAndSparseFiltersAcrossBlocksWithoutAGlobalIndex() {
+        val value = "id;notes\r" + (1..10000).joinToString("") { "$it;${if (it == 50) "target" else "miss"}\r" }
+        TableChunkReader(Positional(value.toByteArray()), "data.csv").use { reader ->
+            reader.read()
+            val previous = reader.findPreviousRows(value.toByteArray().size.toLong(), 10001, "target")
+            assertTrue(previous.table.rows.contains(listOf("50", "target")))
+            assertEquals(previous.table.rows.size, previous.rowIndices.size)
+            assertEquals("false", previous.table.metadata.attributes["complete"])
+        }
+    }
+    @Test fun reverseTextCanTraverseTheWholeSourceWithoutMissingOrRepeatingUnicode() {
+        for (charset in listOf(Charsets.UTF_8, Charsets.UTF_16LE, Charsets.UTF_16BE)) {
+            val value = "a🎵日本語é\n".repeat(150)
+            val bytes = value.toByteArray(charset)
+            TextChunkReader(Positional(bytes), charset).use { reader ->
+                var end = bytes.size.toLong(); val windows = mutableListOf<String>()
+                while (end > 0) {
+                    val previous = reader.readPrevious(end, 17, 3)
+                    assertEquals(end, previous.nextOffset); assertTrue(previous.start < end)
+                    assertFalse(previous.document.text.contains('\ufffd'))
+                    windows.add(0, previous.document.text); end = previous.start
+                }
+                assertEquals(value, windows.joinToString(""))
+            }
+        }
+    }
+    @Test fun reverseCsvMatchesLegacyRowsAcrossSeededRecordsAndRepeatedDirectionChanges() {
+        val random = java.util.Random(73)
+        repeat(50) {
+            val newline = listOf("\n", "\r\n", "\r")[it % 3]
+            val rows = listOf(listOf("id", "notes")) + (1..140).map { index ->
+                listOf(index.toString(), (1..(1 + random.nextInt(20))).joinToString("") {
+                    listOf("é", "🎵", ",", "\"", "\n", "x")[random.nextInt(6)]
+                })
+            }
+            val value = DelimitedText.formatCsv(rows).replace("\r\n", "\n")
+            // Change record terminators without changing quoted field contents.
+            val encoded = buildString {
+                var quoted = false
+                value.forEach { char ->
+                    if (char == '\"') quoted = !quoted
+                    if (char == '\n' && !quoted) append(newline) else append(char)
+                }
+            }
+            val expected = DelimitedText.parseCsv(encoded)
+            TableChunkReader(Positional(encoded.toByteArray(), shortRead = 7), "data.csv").use { reader ->
+                var next = reader.read(maxRows = 7)
+                while (next.hasNext) next = reader.read(next.nextOffset, next.nextRowIndex, maxRows = 7)
+                var end = next.nextOffset; var endIndex = next.nextRowIndex
+                while (end > 0) {
+                    val previous = reader.readPrevious(end, endIndex, maxRows = 7)
+                    assertEquals(expected.subList(previous.firstRowIndex.toInt(), endIndex.toInt()), previous.table.rows)
+                    val forward = reader.read(previous.start, previous.firstRowIndex, maxRows = previous.table.rows.size)
+                    assertEquals(previous.table.rows, forward.table.rows)
+                    end = previous.start; endIndex = previous.firstRowIndex
+                }
+                assertEquals(0L, endIndex)
+            }
+        }
+    }
+    @Test fun precedingReadsRemainPositionalBeyondFourGiBAndHonorCancellation() {
+        val source = Positional("value\n".toByteArray(), 12L * 1024 * 1024 * 1024)
+        TextChunkReader(source).use { reader ->
+            val end = 8L * 1024 * 1024 * 1024
+            val previous = reader.readPrevious(end)
+            assertEquals(end, previous.nextOffset)
+            assertTrue(previous.start > end - 16384)
+            assertTrue(source.fetched <= 3 * 16384)
+            assertTrue(source.positions.all { it >= end - 16384 })
+        }
+        TableChunkReader(Positional("a,b\n1,2\n".toByteArray()), "data.csv", CancellationToken { true }).use { reader ->
+            assertThrows(InterruptedIOException::class.java) { reader.readPrevious(8, 2) }
+        }
+    }
+
 }
