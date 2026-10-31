@@ -305,5 +305,16 @@ class TableChunkReader(source: ByteSource, private val fileName: String = "",
         }
         return chunk
     }
+    /** Count data records exactly, excluding the first/header row. Use a separate reader for a background scan. */
+    @Synchronized fun countDataRows(): Long {
+        var position = 0L; var index = 0L
+        while (true) {
+            cancellation.check()
+            val chunk = read(position, index, maxRows = 500)
+            if (!chunk.hasNext) return (chunk.nextRowIndex - 1).coerceAtLeast(0)
+            if (chunk.nextOffset <= position) throw IOException("CSV row count made no progress")
+            position = chunk.nextOffset; index = chunk.nextRowIndex
+        }
+    }
     @Synchronized override fun close() = chunks.close()
 }

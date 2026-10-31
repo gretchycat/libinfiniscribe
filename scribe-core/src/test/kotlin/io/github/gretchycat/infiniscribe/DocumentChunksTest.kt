@@ -263,4 +263,46 @@ class DocumentChunksTest {
         }
     }
 
+    @Test fun exactDataRowCountsMatchTheLegacyParserAndExcludeTheHeader() {
+        val fixtures = listOf("", "id,name", "id,name\n", "id,name\r\n1,\"first\nsecond\"\r\n\r\n2,\"quote \"\"inside\"\"\"",
+            "id;name\r1;one\r\r2;two\r", "id\tnotes\n1\tvalue\n", "id,notes\n1,\"unclosed\nrest")
+        for (value in fixtures) {
+            val name = if (value.contains('\t')) "data.tsv" else "data.csv"
+            val delimiter = DelimitedText.detectDelimiter(value, name)
+            val expected = (DelimitedText.parseCsv(value, delimiter).size - 1).coerceAtLeast(0).toLong()
+            TableChunkReader(Positional(value.toByteArray(), shortRead = 3), name).use { reader ->
+                assertEquals(expected, reader.countDataRows())
+            }
+        }
+    }
+    @Test fun countingScansBoundedWindowsWithoutDisturbingTheViewportReader() {
+        val value = "id,notes\n" + (1..20000).joinToString("") { "$it,\"line\nquoted \"\"value\"\"\"\n" }
+        val viewportSource = Positional(value.toByteArray())
+        TableChunkReader(viewportSource, "data.csv").use { viewport ->
+            val visible = viewport.read(); val fetched = viewportSource.fetched
+            TableChunkReader(InputStreamSource(value.byteInputStream()), "data.csv").use { counter ->
+                assertEquals(20000L, counter.countDataRows())
+                assertFalse(counter.supportsRandomAccess)
+                assertFalse(counter.canRead(0)) // Count went beyond the bounded byte cache.
+            }
+            assertEquals(fetched, viewportSource.fetched)
+            assertEquals(visible.table.rows, viewport.read().table.rows)
+        }
+    }
+    @Test fun rowCountCancellationAndReadFailuresPropagateAndOwnedSourcesClose() {
+        val cancelled = Positional("id\n1\n".toByteArray())
+        TableChunkReader(cancelled, "data.csv", CancellationToken { true }).use { reader ->
+            assertThrows(InterruptedIOException::class.java) { reader.countDataRows() }
+        }
+        assertTrue(cancelled.closed)
+        var closed = false
+        val broken = object : ByteSource {
+            override val metadata = StreamMetadata()
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int = throw IOException("count failure")
+            override fun close() { closed = true }
+        }
+        assertThrows(IOException::class.java) { TableChunkReader(broken).use { it.countDataRows() } }
+        assertTrue(closed)
+    }
+
 }
