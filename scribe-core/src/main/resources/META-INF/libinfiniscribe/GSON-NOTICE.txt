@@ -1,0 +1,5 @@
+Gson 2.11.0
+Copyright 2008 Google Inc.
+https://github.com/google/gson/tree/gson-parent-2.11.0
+Licensed under the Apache License, Version 2.0; see GSON-LICENSE.txt.
+Unmodified Gson is resolved from Maven Central. InfiniScribe uses it to read/write theme descriptors.

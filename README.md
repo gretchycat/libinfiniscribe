@@ -38,3 +38,16 @@ CSV/TSV windows contain at most 50 matched records by default, with a 64 KiB sca
 `countDataRows()` explicitly scans to EOF using bounded record windows and returns an exact 64-bit data-row total, excluding the first/header row. It reuses the same parser (quoted newlines and skipped blank records included), supports cancellation and does not retain a whole table. Counting requires reading the entire source; a host should use a separate reader on a background worker so the viewport cache/cursor and first display are unaffected. A failed/incomplete count must remain unknown rather than become an estimated total.
 
 Readers own their source by default; ownsSource=false borrows it. Close releases cached bytes and the owned source. Reads are serialized, cancel cooperatively and propagate invalid counts/I/O errors. The Android viewers perform all source work on a cancellable worker and bound the displayed text/rows/columns. Legacy full-document editing is loaded only on explicit edit, under its existing 4 MiB text/8 MiB CSV guard; this checkpoint does not implement paged editing or rewrite publication/recovery.
+
+## Scoped syntax and text styles
+
+`SyntaxHighlighting` supplies bounded lexical profiles and UTF-16 `ScopedTextRange`
+values with TextMate scope names and explicit continuation/context/budget state.
+`TextStyle`/`TextTheme` describe inheritable colors, emphasis, font family and size.
+`TextThemeJson` reads/writes self-contained VS Code tokenColors themes with a
+namespaced font extension. The core has no Android types; Gson 2.11.0 is its JSON
+dependency (Apache 2.0 notice/license bundled in the core JAR).
+
+See `schema/text-theme.schema.json`, `examples/custom-text-theme.json`, and the host's
+`docs/syntax-highlighting.md` for supported selectors, bounds and limitations.
+These lexical profiles do not implement the full TextMate grammar interpreter.

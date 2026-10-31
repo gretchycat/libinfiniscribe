@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "InfiniScribe self-contained VS Code tokenColors theme",
+  "type": "object",
+  "not": {
+    "required": [
+      "include"
+    ]
+  },
+  "properties": {
+    "name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "colors": {
+      "type": "object",
+      "properties": {
+        "editor.foreground": {
+          "type": "string",
+          "pattern": "^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$"
+        },
+        "editor.background": {
+          "type": "string",
+          "pattern": "^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$"
+        }
+      }
+    },
+    "infiniscribe": {
+      "$ref": "#/$defs/font"
+    },
+    "tokenColors": {
+      "type": "array",
+      "maxItems": 512,
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "settings": {
+            "type": "object",
+            "properties": {
+              "foreground": {
+                "type": "string",
+                "pattern": "^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$"
+              },
+              "background": {
+                "type": "string",
+                "pattern": "^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$"
+              },
+              "fontStyle": {
+                "type": "string",
+                "pattern": "^(?:(?:bold|italic|underline|strikethrough)(?:\\s+|$))*$"
+              },
+              "infiniscribe": {
+                "$ref": "#/$defs/font"
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "$defs": {
+    "font": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "fontFamily": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "fontSize": {
+          "type": "number",
+          "minimum": 6,
+          "maximum": 96
+        },
+        "foreground": {
+          "type": "string",
+          "pattern": "^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$"
+        },
+        "background": {
+          "type": "string",
+          "pattern": "^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$"
+        },
+        "fontStyle": {
+          "type": "string"
+        },
+        "bold": {
+          "type": "boolean"
+        },
+        "italic": {
+          "type": "boolean"
+        },
+        "underline": {
+          "type": "boolean"
+        },
+        "strikethrough": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true
+}
