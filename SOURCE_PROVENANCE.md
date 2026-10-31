@@ -16,3 +16,16 @@ The four original `viewer-csv/.../CsvParserTest.kt` expectations are also retain
 ## Random-access document windows
 
 DocumentChunks.kt and its tests are new integration code over libinfinistream, added after handset reports of slow/crashing multi-megabyte previews. They retain DelimitedText parsing rules, add bounded byte caches/character and record boundaries, and expose actual window metadata. No Android API or third-party parser was introduced into scribe-core.
+
+## PDF backend extraction
+
+At InfiniFolder `7eed041`, `viewer-pdf/src/main/java/com/infinifolder/viewer/PdfViewerActivity.kt`
+(SHA-256 `a82c82b2fb836022615a8207888ed51aa123866de38268a00c2edb9432420869`)
+directly opened Android PdfRenderer descriptors and rendered ARGB_8888 pages.
+`scribe-android/.../PdfDocuments.kt` extracts that existing platform backend into
+the library and adds explicit document/frame ownership and common metadata.
+Page operations are serialized and pages close after rendering. The pure JVM
+PageRasterSize helper applies one scale to both bounded axes; ordinary page
+resolution and the existing white background/display render mode are retained.
+Host navigation, zoom, staging leases and external-open UI remain in InfiniFolder.
+This is integration/lifecycle code, not a replacement PDF parser or a new dependency.

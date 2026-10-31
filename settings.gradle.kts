@@ -24,3 +24,6 @@ if (System.getenv("ANDROID_HOME").isNullOrBlank() && System.getenv("ANDROID_SDK_
     if (local.isFile) local.inputStream().use { props.load(it) }
     props.getProperty("sdk.dir")?.let { System.setProperty("android.home", file(it).absolutePath) }
 }
+// The portable core remains buildable on machines without an Android SDK.
+if (!System.getenv("ANDROID_HOME").isNullOrBlank() || !System.getenv("ANDROID_SDK_ROOT").isNullOrBlank() ||
+    !System.getProperty("android.home").isNullOrBlank()) include(":scribe-android")

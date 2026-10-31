@@ -5,7 +5,7 @@ Implementation ownership and validation are recorded in SOURCE_PROVENANCE.md.
 
 Build the JVM module using JDK 17+ and Gradle 9.7.1: `gradle :scribe-core:build`. No Android SDK or runtime is required.
 
-Source dependencies: libinfinistream. Clone them beside this repository (or set -PinfiniLibrariesDir). InfiniFolder pins the complete tested set as submodules; standalone builds use these same sources, not unpublished Maven binaries. Android codec/protocol backends remain in explicit Android modules.
+Source dependencies: libinfinistream. Clone them beside this repository (or set -PinfiniLibrariesDir). InfiniFolder pins the complete tested set as submodules; standalone builds use these same sources, not unpublished Maven binaries. Android backends remain in the explicit optional scribe-android module, included when an SDK is configured through ANDROID_HOME, ANDROID_SDK_ROOT, android.home or local.properties.
 
 Original-code licensing is pending owner selection; see LICENSE.md. No original implementation is rewritten or relicensed by this move.
 
@@ -51,3 +51,37 @@ dependency (Apache 2.0 notice/license bundled in the core JAR).
 See `schema/text-theme.schema.json`, `examples/custom-text-theme.json`, and the host's
 `docs/syntax-highlighting.md` for supported selectors, bounds and limitations.
 These lexical profiles do not implement the full TextMate grammar interpreter.
+
+## PDF pages (Android backend)
+
+`scribe-android` owns the existing Android `PdfRenderer` integration extracted
+from InfiniFolder's PDF viewer. Build with SDK 36:
+
+```sh
+gradle -Dandroid.home=/path/to/android-sdk :scribe-core:build :scribe-android:assembleDebug
+```
+
+`PdfDocuments.open(File, StreamMetadata)` explicitly requires a local seekable
+file. The host stages unsupported sources and retains its cache lease until the
+document is closed. The backend performs no hidden downloads or spooling. The
+renderer owns its descriptor; failed construction closes that descriptor.
+`PdfDocument` is a common `StreamHandle` with actual page-count/backend metadata,
+original provenance and warnings. `renderPage(index, viewportWidth, maxDimension)`
+returns an owned `PdfPageFrame` with actual raster dimensions, pixel format and
+page geometry. Source byte length/verification are not claimed for decoded output.
+
+Page open/render/close and document close are serialized. Every render closes its
+page immediately. Cancellation is checked before/after native rendering; native
+work itself is not interruptible. Frame close recycles its owned bitmap, while
+`takeBitmap()` transfers bitmap lifetime to the presentation surface. Closing a
+document does not invalidate already returned frames. The JVM `PageRasterSize`
+helper preserves aspect ratio within both raster bounds (default 4096 pixels).
+The host retains zoom, navigation, fit modes, cache policy and external-open UI.
+
+The current JVM suite has 74 passing cases, including eight page-size checks.
+InfiniFolder's `scripts/verify-pdf-runtime.py` checks real Android metadata,
+pixels/pages, bounds, frame transfer, failed-request recovery, cancellation,
+corrupt-input descriptor cleanup and concurrent rendering/close. Its handset UI,
+live remote/archive opening and native backends for other systems need separate
+acceptance. Android PDF remains the current backend; PostScript/EPS, LaTeX and
+Office rendering are planned, with no new interpreter or Office dependency added.
