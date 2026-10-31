@@ -78,10 +78,54 @@ document does not invalidate already returned frames. The JVM `PageRasterSize`
 helper preserves aspect ratio within both raster bounds (default 4096 pixels).
 The host retains zoom, navigation, fit modes, cache policy and external-open UI.
 
-The current JVM suite has 74 passing cases, including eight page-size checks.
+The current JVM suite has 99 passing cases, including eight page-size checks
+and 25 EPUB/resource/XML cases.
 InfiniFolder's `scripts/verify-pdf-runtime.py` checks real Android metadata,
 pixels/pages, bounds, frame transfer, failed-request recovery, cancellation,
 corrupt-input descriptor cleanup and concurrent rendering/close. Its handset UI,
 live remote/archive opening and native backends for other systems need separate
 acceptance. Android PDF remains the current backend; PostScript/EPS, LaTeX and
 Office rendering are planned, with no new interpreter or Office dependency added.
+
+## EPUB packages and related resources
+
+`DocumentResources` supplies named common `SourceResource` values, with normalized,
+case-sensitive paths. `DirectoryDocumentResources` borrows a host-owned directory;
+it advertises actual file access, confines canonical paths, skips directory
+symlink traversal and preserves original provenance on individual resources.
+`DocumentPaths.resolve` resolves package-relative URI references, percent-decodes
+once, retains literal plus signs and removes fragments/queries from lookup paths.
+These interfaces can be reused for other compound documents; Office parsing and
+layout are not implemented by introducing them.
+
+`EpubDocuments.read(resources, fallbackTitle, cancellation, limits)` executes a
+registered pull processor and returns an immutable `EpubBook` StreamHandle.
+The portable JVM core owns container.xml/OPF/NCX parsing, spine order/non-linear
+exclusion, manifest fallback and the existing 2048-character HTML title/heading
+fallback. Book output metadata describes actual title, author, chapter count and
+package path, retaining source provenance/warnings without encoded length,
+positional capabilities or a transformed-output verification claim. Inputs remain
+borrowed; every opened XML/title source closes on success, failure or cancellation.
+
+The host/Vault supplies container expansion. Scribe does not open ZIPs, download
+books, save storage or own staging/cache leases. It opens metadata and small title
+prefixes through common sources; images, CSS and chapter presentation stay separate.
+InfiniFolder retains full staged ZIP/resource expansion and its existing cache
+capacity policy, WebView rendering, themes, font scaling and navigation. On-demand
+archive resource serving and EPUB 3 NAV-label interpretation remain follow-up;
+existing EPUB 3 spine/HTML-title fallback is retained.
+
+Standard platform SAX APIs provide XML parsing on JVM and Android, with no new
+third-party dependency. External entities/DTDs are never loaded; a streaming byte
+guard rejects internal DTD subsets consistently before either platform can expand
+them, while allowing NCX external DOCTYPE identifiers, comments and CDATA. This
+guard retains encoding detection and uses constant additional memory. Explicit
+`EpubReadLimits` can bound XML bytes/events/text/depth and fallback resource search;
+defaults retain existing valid-book size behavior. InfiniFolder uses its existing
+cache budget for the XML byte limit. Token/thread cancellation is cooperative.
+
+The application's `scripts/verify-epub-runtime.py` exercises actual packaged
+Vault/Scribe classes and Android XML behavior, including related resources and
+nested ZIP input. WebView layout, linked images/styles, navigation, theme/font
+controls and live remote opening require handset acceptance. Synthetic EPUB 2/3,
+fallback and invalid books are under the application's document fixtures.

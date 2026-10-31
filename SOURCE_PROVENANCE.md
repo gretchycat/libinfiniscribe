@@ -29,3 +29,22 @@ PageRasterSize helper applies one scale to both bounded axes; ordinary page
 resolution and the existing white background/display render mode are retained.
 Host navigation, zoom, staging leases and external-open UI remain in InfiniFolder.
 This is integration/lifecycle code, not a replacement PDF parser or a new dependency.
+
+## EPUB package extraction
+
+At InfiniFolder `28fcc48`, `viewer-epub/src/main/java/com/infinifolder/viewer/EpubViewerActivity.kt`
+(SHA-256 `34e4e751dfdcf2d701683ced5c0d87a5a71156721707077f9a43814be955ed1d`)
+owned ZIP extraction, container.xml/OPF/NCX parsing and HTML-title fallback.
+`EpubDocuments.kt` moves the structural rules into the portable core over common
+related resources. Platform-neutral SAX events replace Android XmlPullParser
+events; first metadata values, spine/non-linear rules, manifest order/numbering,
+NCX title priority and the bounded HTML regex fallback are retained. URI resolution
+now preserves literal plus signs, handles fragment-bearing hrefs and resolves NCX
+references relative to the NCX file. Internal DTD subsets are explicitly unsupported
+and external DTD identifiers do not trigger resource/network access.
+
+`DocumentResources.kt`, `EpubXmlInput.kt`, typed output/pull integration and tests
+are new adapter code. ZIP expansion moves separately to libinfinivault; Scribe
+neither depends on Vault/Store nor writes storage. No additional dependency or
+license change was introduced. WebView, cache leases, themes and controls remain
+in InfiniFolder.
