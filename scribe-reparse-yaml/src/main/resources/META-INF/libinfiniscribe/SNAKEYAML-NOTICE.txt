@@ -1,0 +1,5 @@
+SnakeYAML 2.4
+https://bitbucket.org/snakeyaml/snakeyaml
+Maven coordinate: org.yaml:snakeyaml:2.4
+License: Apache License 2.0 (SNAKEYAML-LICENSE.txt)
+The dependency's original source copyright notices remain applicable.

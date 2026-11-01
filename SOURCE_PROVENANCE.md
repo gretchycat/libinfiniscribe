@@ -48,3 +48,14 @@ are new adapter code. ZIP expansion moves separately to libinfinivault; Scribe
 neither depends on Vault/Store nor writes storage. No additional dependency or
 license change was introduced. WebView, cache leases, themes and controls remain
 in InfiniFolder.
+
+## Structured text reparsers
+
+On 2026-11-01 the application's new, uncommitted `text-reparser-*` modules move
+into the optional `scribe-reparse-*` modules. Backend algorithms remain in Kotlin;
+the new package is `io.github.gretchycat.infiniscribe.reparse`. API/XML/YAML/TOML
+use JVM modules; the existing Android JsonReader backend remains explicitly
+Android. The host's backend registry, imports and consumer call move with them.
+New integration supplies Stream processor descriptors, actual transformed metadata,
+complete-input guards and library-owned backend selection. See REPARSE.md for
+module boundaries, pinned dependencies, limits, license notices and verification.

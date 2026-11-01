@@ -1,0 +1,10 @@
+TomlJ 1.1.1
+https://github.com/tomlj/tomlj/tree/1.1.1
+Maven coordinate: org.tomlj:tomlj:1.1.1
+License: Apache License 2.0 (TOMLJ-LICENSE.txt)
+
+ANTLR runtime 4.11.1
+https://github.com/antlr/antlr4/tree/4.11.1
+Maven coordinate: org.antlr:antlr4-runtime:4.11.1
+License: BSD 3-Clause (ANTLR-LICENSE.txt)
+The dependencies' original source copyright notices remain applicable.

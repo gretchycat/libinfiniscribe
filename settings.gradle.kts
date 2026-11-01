@@ -17,7 +17,7 @@ val familyRoot = providers.gradleProperty("infiniLibrariesDir").orNull?.let(::fi
 rootProject.name = "libinfiniscribe"
 check(familyRoot.resolve("libinfinistream/settings.gradle.kts").isFile) { "Missing sibling libinfinistream; clone workspace dependencies or set -PinfiniLibrariesDir" }
 includeBuild(familyRoot.resolve("libinfinistream"))
-include(":scribe-core")
+include(":scribe-core", ":scribe-reparse-api", ":scribe-reparse-yaml", ":scribe-reparse-xml", ":scribe-reparse-toml")
 if (System.getenv("ANDROID_HOME").isNullOrBlank() && System.getenv("ANDROID_SDK_ROOT").isNullOrBlank() && System.getProperty("android.home").isNullOrBlank()) {
     val props = java.util.Properties()
     val local = file("local.properties")
@@ -26,4 +26,4 @@ if (System.getenv("ANDROID_HOME").isNullOrBlank() && System.getenv("ANDROID_SDK_
 }
 // The portable core remains buildable on machines without an Android SDK.
 if (!System.getenv("ANDROID_HOME").isNullOrBlank() || !System.getenv("ANDROID_SDK_ROOT").isNullOrBlank() ||
-    !System.getProperty("android.home").isNullOrBlank()) include(":scribe-android")
+    !System.getProperty("android.home").isNullOrBlank()) include(":scribe-android", ":scribe-reparse-json-android")
