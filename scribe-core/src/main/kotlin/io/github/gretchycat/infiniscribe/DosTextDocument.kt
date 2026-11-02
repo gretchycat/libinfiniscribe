@@ -22,7 +22,7 @@ object DosTextDocuments {
         require(columns in 1..320 && maxRows in 1..65536)
         if (bytes.size > 4 * 1024 * 1024) throw IOException("DOS text exceeds 4 MiB limit")
         class Row {
-            val chars=CharArray(columns) { ' ' }; val fg=IntArray(columns) { palette[7] }; val bg=IntArray(columns) { palette[0] }
+            val chars=Array(columns) { " " }; val fg=IntArray(columns) { palette[7] }; val bg=IntArray(columns) { palette[0] }
         }
         val rows=ArrayList<Row>(); rows.add(Row())
         var x=0; var y=0; var savedX=0; var savedY=0
@@ -37,13 +37,20 @@ object DosTextDocuments {
         fun clear(row:Int,from:Int,to:Int) {
             ensure(row)
             for(c in from.coerceIn(0,columns)..to.coerceIn(-1,columns-1)) {
-                rows[row].chars[c]=' '; rows[row].fg[c]=foreground();rows[row].bg[c]=customBg ?: palette[bg]
+                rows[row].chars[c]=" "; rows[row].fg[c]=foreground();rows[row].bg[c]=customBg ?: palette[bg]
             }
         }
-        fun put(c:Char) {
+        fun put(c:Int) {
+            val category=Character.getType(c)
+            if(category==Character.NON_SPACING_MARK.toInt() || category==Character.COMBINING_SPACING_MARK.toInt() ||
+                category==Character.ENCLOSING_MARK.toInt()) {
+                val previous=if(wrapPending)x else x-1
+                if(previous>=0)rows[y].chars[previous]+=String(Character.toChars(c))
+                return
+            }
             if(wrapPending) { x=0;y++;wrapPending=false }
             ensure(y)
-            rows[y].chars[x]=c
+            rows[y].chars[x]=String(Character.toChars(c))
             val f=foreground();val b=customBg ?: palette[bg]
             rows[y].fg[x]=if(inverse)b else f;rows[y].bg[x]=if(inverse)f else b
             if(x==columns-1)wrapPending=true else x++
@@ -56,27 +63,35 @@ object DosTextDocuments {
         val music=ArrayList<String>()
         var end=bytes.size
         if(end>=128 && String(bytes,end-128,7,Charsets.US_ASCII)=="SAUCE00") end-=128
+        val detection=DosTextEncoding.detect(bytes)
+        val utf8=detection.charset==Charsets.UTF_8 && detection.evidence!="Encoding uncertain" &&
+            bytes.any { it.toInt() and 128 != 0 }
+        val content=if(utf8)String(bytes,0,end,Charsets.UTF_8).removePrefix("\uFEFF").codePoints().toArray()
+            else IntArray(end) { cp437Chars[bytes[it].toInt() and 255].code }
+        // Keep ASCII controls as controls; CP437's graphical C0 symbols apply only to printable cells.
+        if(!utf8)for(i in 0 until end)if((bytes[i].toInt() and 255)<32)content[i]=bytes[i].toInt() and 255
+        end=content.size
         var at=0
         while(at<end) {
             if(at and 1023==0)cancellation.check()
-            val b=bytes[at++].toInt() and 255
+            val b=content[at++]
             if(b==26)break // DOS EOF; never display a SAUCE/comment trailer.
             if(b==27) {
                 if(at>=end)break
-                val next=bytes[at++].toInt() and 255
+                val next=content[at++]
                 if(next=='7'.code) {savedX=x;savedY=y;continue}
                 if(next=='8'.code) {x=savedX;y=savedY;wrapPending=false;continue}
                 if(next!='['.code)continue
                 val start=at
-                while(at<end && at-start<128 && (bytes[at].toInt() and 255) !in 0x40..0x7e)at++
+                while(at<end && at-start<128 && content[at] !in 0x40..0x7e)at++
                 if(at>=end || at-start>=128)continue
-                val command=(bytes[at++].toInt() and 255).toChar()
-                val parameters=String(bytes,start,at-start-1,Charsets.US_ASCII)
+                val command=content[at++].toChar()
+                val parameters=String(content,start,at-start-1)
                 if(command in charArrayOf('M','N','|') && parameters.isEmpty()) {
                     var finish=at
-                    while(finish<end && finish-at<16384 && bytes[finish]!=14.toByte() && bytes[finish]!=27.toByte())finish++
-                    if(finish<end && bytes[finish]==14.toByte()) {
-                        var score=String(bytes,at,finish-at,Charsets.US_ASCII)
+                    while(finish<end && finish-at<16384 && content[finish]!=14 && content[finish]!=27)finish++
+                    if(finish<end && content[finish]==14) {
+                        var score=String(content,at,finish-at)
                         if(score.isNotEmpty() && musicChars.matches(score)) {
                             if(command=='M' && (score.first().uppercaseChar() in "BFLS" ||
                                 (score.first().uppercaseChar()=='N' && score.getOrNull(1)?.isDigit()!=true)))score="M$score"
@@ -140,24 +155,26 @@ object DosTextDocuments {
             when(b) {
                 0,7,14,15 -> {}
                 8 -> {x=(x-1).coerceAtLeast(0);wrapPending=false}
-                9 -> {if(wrapPending){x=0;y++;ensure(y);wrapPending=false};val stop=((x/8+1)*8).coerceAtMost(columns);repeat((stop-x).coerceAtLeast(1)) {put(' ')}}
+                9 -> {if(wrapPending){x=0;y++;ensure(y);wrapPending=false};val stop=((x/8+1)*8).coerceAtMost(columns);repeat((stop-x).coerceAtLeast(1)) {put(32)}}
                 10 -> {y++;ensure(y);x=0;wrapPending=false}
                 13 -> {x=0;wrapPending=false}
-                else -> put(cp437Chars[b])
+                else -> put(if(!utf8 && b<32)cp437Chars[b].code else b)
             }
         }
         cancellation.check()
         val text=StringBuilder(rows.size*(columns+1));val runs=ArrayList<DosTextRun>()
         for((r,row) in rows.withIndex()) {
             if(r and 255==0)cancellation.check()
-            val base=text.length;text.append(row.chars)
+            val offsets=IntArray(columns+1)
+            for(c in 0 until columns) {offsets[c]=text.length;text.append(row.chars[c])}
+            offsets[columns]=text.length
             var start=0
             while(start<columns) {
                 var stop=start+1
                 while(stop<columns && row.fg[stop]==row.fg[start] && row.bg[stop]==row.bg[start])stop++
                 if(row.fg[start]!=palette[7] || row.bg[start]!=palette[0]) {
                     if(runs.size>=262144)throw IOException("ANSI styling exceeds display limit")
-                    runs.add(DosTextRun(base+start,base+stop,row.fg[start],row.bg[start]))
+                    runs.add(DosTextRun(offsets[start],offsets[stop],row.fg[start],row.bg[start]))
                 }
                 start=stop
             }

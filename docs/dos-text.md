@@ -21,3 +21,11 @@ strings. Cancellation is checked while parsing and building the result. Limits
 fail explicitly instead of publishing truncated success. Hosts retain original
 bytes for raw-source viewing/editing, use native selectable text and inject their
 own typeface and output backend.
+
+ANSI detection also applies to valid UTF-8, including a UTF-8 BOM. UTF-8 is
+decoded before terminal controls are interpreted; CP437 remains the fallback
+for legacy art. UTF-8 art with a DOS text filename or SAUCE metadata can use
+the same surface without escape codes. The parser preserves Unicode scalar
+values, attaches combining marks to the preceding cell, and returns style
+offsets in UTF-16 units for Android spans. Printable scalar values occupy one
+terminal cell; full Unicode wide-character/emoji terminal layout is not emulated.
