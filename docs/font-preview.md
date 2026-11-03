@@ -22,3 +22,9 @@ not install fonts or change system text preferences.
 The Android app's `viewer-font` module provides sample text, sizes, light/dark
 specimens, face selection and metadata presentation. Canvas continues to own its
 graphics/ANSI font resources.
+
+`FontDocumentsTest` exercises encoded metadata fixtures for naming/metrics,
+collections, variable axes, invalid offsets/directories, unsupported inputs,
+size limits and interruption. The host's shared-viewer tests additionally inspect
+the real bundled CP437 font and exercise MIME/registry/viewer routing. Native
+glyph rendering requires Android runtime checks.
