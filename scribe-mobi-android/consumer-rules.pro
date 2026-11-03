@@ -1,0 +1,2 @@
+-keep class io.github.gretchycat.infiniscribe.mobi.MobiNative { *; }
+-keepclassmembers class * implements io.github.gretchycat.infiniscribe.mobi.MobiOutput { public void writePart(java.lang.String, byte[]); }
