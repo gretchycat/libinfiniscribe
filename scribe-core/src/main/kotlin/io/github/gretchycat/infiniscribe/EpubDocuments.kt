@@ -50,18 +50,7 @@ object EpubDocuments {
         warnings = input.warnings.toList())
 
     internal fun parse(resources: DocumentResources, fallbackTitle: String, cancellation: CancellationToken, limits: EpubReadLimits): EpubBook {
-        var opfPath: String? = null
-        xml(resources, "META-INF/container.xml", cancellation, limits, start = { name, attrs ->
-            if (name == "rootfile" && opfPath == null) attrs["full-path"]?.takeIf { it.isNotEmpty() }?.let {
-                opfPath = DocumentPaths.resolve("", it) ?: throw IOException("Invalid EPUB package path")
-            }
-        })
-        if (opfPath == null) opfPath = resources.paths().withIndex().firstOrNull {
-            cancellation.check()
-            if (it.index >= limits.maxResourcePaths) throw IOException("Too many EPUB resources")
-            it.value.endsWith(".opf", true)
-        }?.value
-        val packagePath = opfPath ?: throw IOException("Package metadata (OPF) not found")
+        val packagePath = packagePath(resources, cancellation, limits)
         val manifest = linkedMapOf<String, String>()
         val spine = mutableListOf<String>()
         var title: String? = null
@@ -136,6 +125,21 @@ object EpubDocuments {
         return EpubBook(title ?: fallbackTitle, author ?: "", chapters.toList(), info)
     }
 
+    internal fun packagePath(resources: DocumentResources, cancellation: CancellationToken, limits: EpubReadLimits): String {
+        var opfPath: String? = null
+        xml(resources, "META-INF/container.xml", cancellation, limits, start = { name, attrs ->
+            if (name == "rootfile" && opfPath == null) attrs["full-path"]?.takeIf { it.isNotEmpty() }?.let {
+                opfPath = DocumentPaths.resolve("", it) ?: throw IOException("Invalid EPUB package path")
+            }
+        })
+        if (opfPath == null) opfPath = resources.paths().withIndex().firstOrNull {
+            cancellation.check()
+            if (it.index >= limits.maxResourcePaths) throw IOException("Too many EPUB resources")
+            it.value.endsWith(".opf", true)
+        }?.value
+        return opfPath ?: throw IOException("Package metadata (OPF) not found")
+    }
+
     private fun htmlTitle(source: SourceResource, cancellation: CancellationToken): String? {
         return try {
             cancellation.check()
@@ -162,7 +166,7 @@ object EpubDocuments {
         }
     }
 
-    private fun xml(resources: DocumentResources, path: String, cancellation: CancellationToken, limits: EpubReadLimits,
+    internal fun xml(resources: DocumentResources, path: String, cancellation: CancellationToken, limits: EpubReadLimits,
         start: (String, Map<String, String>) -> Unit = { _, _ -> }, text: (String) -> Unit = {}, end: (String) -> Unit = {}) {
         val source = resources.source(path) ?: throw IOException("Invalid EPUB: $path not found")
         val reader = SAXParserFactory.newInstance().apply { isNamespaceAware = true }.newSAXParser().xmlReader
