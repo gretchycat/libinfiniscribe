@@ -17,13 +17,24 @@ object SyntaxHighlighting {
     val languages = listOf("plain", "json", "javascript", "typescript", "java", "kotlin", "c", "cpp", "csharp", "python",
         "shell", "sql", "xml", "html", "css", "yaml", "toml", "ini", "markdown")
     fun detect(fileName: String, mime: String = "", firstLine: String = ""): String = when (fileName.substringAfterLast('.').lowercase()) {
-        "json", "jsonc" -> "json"; "js", "mjs", "cjs", "jsx" -> "javascript"; "ts", "tsx" -> "typescript"
-        "java" -> "java"; "kt", "kts" -> "kotlin"; "c", "h" -> "c"; "cpp", "cc", "cxx", "hpp" -> "cpp"; "cs" -> "csharp"
-        "py", "pyw" -> "python"; "sh", "bash", "zsh" -> "shell"; "sql" -> "sql"; "xml", "svg", "xsd", "plist" -> "xml"
-        "html", "htm", "xhtml" -> "html"; "css", "scss", "less" -> "css"; "yaml", "yml" -> "yaml"
+        "json", "jsonc" -> "json"; "js", "mjs", "cjs", "jsx" -> "javascript"; "ts", "tsx", "mts", "cts" -> "typescript"
+        "java" -> "java"; "kt", "kts" -> "kotlin"; "c", "h" -> "c"; "cpp", "cc", "cxx", "hpp", "hh", "hp", "hxx", "ipp", "inl", "tcc" -> "cpp"; "cs" -> "csharp"
+        "py", "pyw", "pyi", "py2", "py3" -> "python"; "sh", "bash", "zsh", "ksh" -> "shell"; "sql" -> "sql"; "xml", "svg", "xsd", "xsl", "xslt", "plist" -> "xml"
+        "html", "htm", "xhtml" -> "html"; "css", "scss", "sass", "less" -> "css"; "yaml", "yml" -> "yaml"
         "toml" -> "toml"; "ini", "cfg", "conf", "properties" -> "ini"; "md", "markdown" -> "markdown"
         else -> when {
             mime.contains("json") -> "json"; mime.contains("xml") -> "xml"; mime == "text/html" -> "html"
+            mime in setOf("text/x-csrc", "text/x-chdr", "text/x-c") -> "c"
+            mime in setOf("text/x-c++src", "text/x-c++hdr", "text/x-c++") -> "cpp"
+            mime == "text/x-csharp" -> "csharp"; mime == "text/x-java" -> "java"; mime == "text/x-kotlin" -> "kotlin"
+            mime in setOf("application/javascript", "text/javascript", "application/x-javascript") -> "javascript"
+            mime in setOf("text/typescript", "application/typescript") -> "typescript"
+            mime in setOf("text/x-python", "text/x-python2", "text/x-python3", "application/x-python") -> "python"
+            mime in setOf("application/x-sh", "application/x-shellscript", "text/x-shellscript", "text/x-sh") -> "shell"
+            mime == "text/css" || mime in setOf("text/x-scss", "text/x-sass", "text/x-less") -> "css"
+            mime in setOf("application/sql", "text/x-sql") -> "sql"
+            mime in setOf("application/yaml", "application/x-yaml", "text/yaml") -> "yaml"
+            mime == "application/toml" -> "toml"; mime == "text/markdown" -> "markdown"
             firstLine.startsWith("#!") && firstLine.contains("python") -> "python"
             firstLine.startsWith("#!") && listOf("sh", "bash", "zsh").any { firstLine.contains(it) } -> "shell"
             else -> "plain"
