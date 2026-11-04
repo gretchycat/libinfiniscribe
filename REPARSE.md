@@ -20,11 +20,15 @@ of the JSON Android module, matching the existing optional PDF backend.
 ## Host integration
 
 ```kotlin
-val registry = TextReparserRegistry(listOf(JsonTextReparser, YamlTextReparser,
-    XmlTextReparser, TomlTextReparser))
+val registry = TextReparserRegistry() // discovers linked reparsing handlers
 val backend = registry.detect(fileName, mime, original.text)
 val display = backend?.let { TextReparsing.reparse(original, it, cancellation) }
 ```
+
+Declare the required backend modules as dependencies. Each ships its capability
+provider; absent backends are not silently assumed. The default registry discovers
+the linked `TextReparserHandler` services. An explicit backend list remains a
+supported compatibility option. See [runtime capabilities](CAPABILITIES.md).
 
 Run reparsing on a worker before assigning the display text to a wrapping view.
 The host retains the original TextDocument and original bytes for editing and

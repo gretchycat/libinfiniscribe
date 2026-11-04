@@ -34,4 +34,11 @@ POI 5.5.1 and RTF Parser Kit 1.16.0 use Apache-2.0. Transitive POI licenses/noti
 
 Input files accepted by the file-based readers are limited to 64 MiB; XML/resource and workbook-preview bounds are implemented separately. The host is responsible for staging limits before this file check. Parsing is synchronous; call it on a cancellable worker. Cancellation is cooperative and cannot interrupt every internal native/POI parse step.
 
-The app and standalone debug builds pass. No automated tests or handset document acceptance were performed for this addition. In particular, Android runtime compatibility, real MOBI reconstruction, Word/slide rendering, formula/sheet behavior and provider/remote inputs still require acceptance. Errors are surfaced rather than returned as successful empty documents.
+The owner broadly confirmed the document-reading pass in the host on 2026-11-03.
+That report does not establish every MOBI variant, layout, worksheet/formula case
+or remote/provider path. The 2026-11-04 runtime-discovery gate builds the app and
+standalone host and exercises registration/selection; Office/MOBI/RTF modules have
+no independent executable JVM document suites in that gate. Real backend/Android
+and format-variant checks remain necessary. Errors are surfaced, never successful
+empty documents. Discover linked readers through the typed services documented in
+[capabilities](../CAPABILITIES.md); no InfiniFolder initialization is required.
