@@ -51,6 +51,7 @@ object EpubDocuments {
 
     internal fun parse(resources: DocumentResources, fallbackTitle: String, cancellation: CancellationToken, limits: EpubReadLimits): EpubBook {
         val packagePath = packagePath(resources, cancellation, limits)
+        val encrypted = encryptedResources(resources, cancellation, limits)
         val manifest = linkedMapOf<String, String>()
         val spine = mutableListOf<String>()
         var title: String? = null
@@ -108,21 +109,54 @@ object EpubDocuments {
             }
         }
         val chapters = mutableListOf<EpubChapter>()
+        val skippedEncrypted = linkedSetOf<String>()
         fun chapter(id: String, href: String, fallbackNumber: Int) {
             cancellation.check()
             val path = DocumentPaths.resolve(packagePath, href) ?: return
+            encrypted[path]?.let { algorithm ->
+                if (skippedEncrypted.add(path)) warnings += "Skipped encrypted EPUB chapter ($algorithm)"
+                return
+            }
             val source = resources.source(path) ?: return
             val chapterTitle = toc[path] ?: htmlTitle(source, cancellation) ?: "Chapter $fallbackNumber"
             chapters += EpubChapter(id, href, chapterTitle, path)
         }
         for (id in spine) manifest[id]?.let { chapter(id, it, chapters.size + 1) }
-        if (chapters.isEmpty()) manifest.values.filter {
+        if (chapters.isEmpty() && skippedEncrypted.isEmpty()) manifest.values.filter {
             it.endsWith(".html", true) || it.endsWith(".xhtml", true) || it.endsWith(".htm", true)
         }.forEachIndexed { index, href -> chapter("item_$index", href, index + 1) }
+        if (chapters.isEmpty() && skippedEncrypted.isNotEmpty()) {
+            val algorithms = skippedEncrypted.mapNotNull { encrypted[it] }.distinct().joinToString(", ")
+            throw IOException("This EPUB's chapters are encrypted ($algorithms). This reader cannot decrypt them; a stylesheet cannot make them readable.")
+        }
         val info = bookMetadata(resources.metadata).let { it.copy(attributes = it.attributes + mapOf(
             "title" to (title ?: fallbackTitle), "author" to (author ?: ""), "chapterCount" to chapters.size.toString(),
             "packagePath" to packagePath), warnings = it.warnings + warnings) }
         return EpubBook(title ?: fallbackTitle, author ?: "", chapters.toList(), info)
+    }
+
+    private fun encryptedResources(resources: DocumentResources, cancellation: CancellationToken,
+        limits: EpubReadLimits): Map<String, String> {
+        if (resources.source("META-INF/encryption.xml") == null) return emptyMap()
+        val encrypted = linkedMapOf<String, String>()
+        var algorithm = ""
+        var inData = false
+        val references = mutableListOf<String>()
+        xml(resources, "META-INF/encryption.xml", cancellation, limits, start = { name, attrs ->
+            if (name == "encrypteddata") { inData = true; algorithm = ""; references.clear() }
+            if (inData && name == "encryptionmethod" && algorithm.isEmpty())
+                algorithm = attrs["Algorithm"] ?: attrs["algorithm"].orEmpty()
+            if (inData && name == "cipherreference") (attrs["URI"] ?: attrs["uri"])?.let {
+                // CipherReference paths are relative to the EPUB root, not META-INF.
+                DocumentPaths.resolve("encryption.xml", it)?.let(references::add)
+            }
+        }, end = { name ->
+            if (name == "encrypteddata") {
+                references.forEach { encrypted[it] = algorithm.ifBlank { "unspecified encryption" } }
+                inData = false
+            }
+        })
+        return encrypted
     }
 
     internal fun packagePath(resources: DocumentResources, cancellation: CancellationToken, limits: EpubReadLimits): String {

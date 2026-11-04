@@ -109,6 +109,18 @@ package path, retaining source provenance/warnings without encoded length,
 positional capabilities or a transformed-output verification claim. Inputs remain
 borrowed; every opened XML/title source closes on success, failure or cancellation.
 
+Encryption metadata in `META-INF/encryption.xml` is parsed with the same bounded
+XML/resource resolver. Encrypted chapters are skipped with warnings; when none
+remain readable, parsing fails with an explicit unsupported-encryption message.
+Font/image encryption alone does not block readable chapters. No decryptor is
+advertised or invoked, and an all-encrypted spine cannot become a misleading
+TOC-only book through manifest fallback.
+
+`ReadingHtml.fallbackStyle` supplies minimal prose/heading/table/image CSS for a
+host rendering a page without publisher styles. `ReadingHtml.declaredEncoding`
+accepts a bounded prefix and reports XML-declared/BOM encoding for HTML delivery.
+These helpers do not open storage, fetch styles or mutate publisher content.
+
 The host/Vault supplies container expansion. Scribe does not open ZIPs, download
 books, save storage or own staging/cache leases. It opens metadata and small title
 prefixes through common sources; images, CSS and chapter presentation stay separate.
