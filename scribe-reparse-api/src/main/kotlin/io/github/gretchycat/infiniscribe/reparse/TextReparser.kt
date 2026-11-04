@@ -49,8 +49,9 @@ class ReparseReader(text: String, private val cancellation: CancellationToken) :
 }
 
 /** Selection uses explicit file metadata first, then bounded content hints from installed backends. */
-class TextReparserRegistry(private val reparsers: List<TextReparser>) {
+class TextReparserRegistry(private val reparsers: List<TextReparser>? = null) {
     fun detect(fileName: String, mime: String, text: String): TextReparser? {
+        val reparsers = reparsers ?: ReparserCapabilities.parsers()
         val extension = fileName.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT)
         val type = mime.substringBefore(';').trim().lowercase(java.util.Locale.ROOT)
         reparsers.firstOrNull { extension in it.extensions }?.let { return it }

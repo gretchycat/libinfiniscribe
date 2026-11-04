@@ -25,9 +25,7 @@ object TableDocuments {
         cancellation.check()
         val selected = delimiter ?: DelimitedText.detectDelimiter(document.text, fileName)
         val processor = TableParseProcessor(selected)
-        val registry = ProcessorRegistry(listOf(ProcessorRegistration(processor) { inputs, _ ->
-            mapOf("table" to listOf(tableMetadata(inputs.getValue("text").single(), selected)))
-        }))
+        val registry = ProcessorRegistry(listOf(processor.registration()))
         registry.openPipeline(TextDocumentHandle(document), parseDescriptor.outputs.single(),
             ProcessorOptions(cancellation = cancellation)).use { session ->
             return (session.outputs.getValue("table").single() as TableDocumentHandle).document
@@ -37,10 +35,7 @@ object TableDocuments {
     /** Serialize current cells with the existing quoting/LF rules and UTF-8 save bytes. No storage writes occur here. */
     fun format(document: TableDocument, cancellation: CancellationToken = CancellationToken.NONE): TextDocument {
         val processor = TableFormatProcessor()
-        val registry = ProcessorRegistry(listOf(ProcessorRegistration(processor) { inputs, _ ->
-            val source = inputs.getValue("table").single()
-            mapOf("text" to listOf(textMetadata(source, document.delimiter)))
-        }))
+        val registry = ProcessorRegistry(listOf(processor.registration()))
         registry.openPipeline(TableDocumentHandle(document), formatDescriptor.outputs.single(),
             ProcessorOptions(cancellation = cancellation)).use { session ->
             return (session.outputs.getValue("text").single() as TextDocumentHandle).document
@@ -73,6 +68,9 @@ object TableDocuments {
 
 class TableParseProcessor(private val delimiter: Char = ',') : StreamProcessor {
     override val descriptor = TableDocuments.parseDescriptor
+    fun registration()=ProcessorRegistration(this) {inputs,_ ->
+        mapOf("table" to listOf(TableDocuments.tableMetadata(inputs.getValue("text").single(),delimiter)))
+    }
     override fun open(inputs: Map<String, List<StreamHandle>>, options: ProcessorOptions): ProcessorSession {
         if (options.mode != FlowMode.PULL || options.values.isNotEmpty()) throw IOException("Unsupported table parser options")
         val document = (inputs["text"]?.singleOrNull() as? TextDocumentHandle)?.document
@@ -93,6 +91,11 @@ class TableParseProcessor(private val delimiter: Char = ',') : StreamProcessor {
 
 class TableFormatProcessor : StreamProcessor {
     override val descriptor = TableDocuments.formatDescriptor
+    fun registration()=ProcessorRegistration(this) {inputs,_ ->
+        val source=inputs.getValue("table").single()
+        val delimiter=source.attributes["delimiter"]?.singleOrNull()?:','
+        mapOf("text" to listOf(TableDocuments.textMetadata(source,delimiter)))
+    }
     override fun open(inputs: Map<String, List<StreamHandle>>, options: ProcessorOptions): ProcessorSession {
         if (options.mode != FlowMode.PULL || options.values.isNotEmpty()) throw IOException("Unsupported table formatter options")
         val table = (inputs["table"]?.singleOrNull() as? TableDocumentHandle)?.document

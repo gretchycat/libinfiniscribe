@@ -19,15 +19,7 @@ object TextDocuments {
     fun read(input: ByteSource, maxBytes: Int = 4 * 1024 * 1024, charset: Charset = Charsets.UTF_8,
         cancellation: CancellationToken = CancellationToken.NONE): TextDocument {
         val processor = TextDecodeProcessor(maxBytes, charset)
-        val registry = ProcessorRegistry(listOf(ProcessorRegistration(processor) { inputs, _ ->
-            val source = inputs.getValue("encoded").single()
-            mapOf("text" to listOf(source.copy(
-                content = ContentType(DataKind.TEXT, "text/plain", "text", "unicode"),
-                length = null, finiteness = Finiteness.FINITE, capabilities = emptySet(), verification = Verification.UNKNOWN,
-                ownership = Ownership.OWNED, concurrency = Concurrency.SERIAL,
-                provenance = source.provenance.copy(transformations = source.provenance.transformations + "decode:${charset.name()}"),
-                attributes = mapOf("charset" to charset.name(), "sourceCharset" to charset.name(), "storage" to "text-document"))))
-        }))
+        val registry = ProcessorRegistry(listOf(processor.registration()))
         val target = PortDescriptor("text", setOf(DataKind.TEXT), attributes = mapOf("charset" to charset.name(), "storage" to "text-document"))
         registry.openPipeline(input, target, ProcessorOptions(cancellation = cancellation)).use { session ->
             return (session.outputs.getValue("text").single() as TextDocumentHandle).document
@@ -69,6 +61,15 @@ class TextDocumentHandle(val document: TextDocument) : StreamHandle {
 class TextDecodeProcessor(private val maxBytes: Int = 4 * 1024 * 1024,
     private val charset: Charset = Charsets.UTF_8) : StreamProcessor {
     override val descriptor = TextDocuments.decodeDescriptor
+    fun registration()=ProcessorRegistration(this) { inputs, _ ->
+            val source = inputs.getValue("encoded").single()
+            mapOf("text" to listOf(source.copy(
+                content = ContentType(DataKind.TEXT, "text/plain", "text", "unicode"),
+                length = null, finiteness = Finiteness.FINITE, capabilities = emptySet(), verification = Verification.UNKNOWN,
+                ownership = Ownership.OWNED, concurrency = Concurrency.SERIAL,
+                provenance = source.provenance.copy(transformations = source.provenance.transformations + "decode:${charset.name()}"),
+                attributes = mapOf("charset" to charset.name(), "sourceCharset" to charset.name(), "storage" to "text-document"))))
+    }
     override fun open(inputs: Map<String, List<StreamHandle>>, options: ProcessorOptions): ProcessorSession {
         if (options.mode != FlowMode.PULL || options.values.isNotEmpty()) throw IOException("Unsupported text processor options")
         val input = inputs["encoded"]?.singleOrNull() as? ByteSource ?: throw IOException("One encoded byte source is required")
