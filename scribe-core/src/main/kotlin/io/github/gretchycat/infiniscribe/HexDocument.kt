@@ -10,12 +10,16 @@ import java.nio.charset.CodingErrorAction
 import java.util.TreeMap
 
 /** Fixed-length byte document. Input is borrowed; edits are sparse and never write the source. */
-class HexDocument(private val source: PositionalReadable, val length: Long) {
+class HexDocument(private val source: PositionalReadable, length: Long) {
     init { require(length >= 0) }
-    private class Patch { val data = ByteArray(4096); val changed = java.util.BitSet(4096) }
+    private var sourceLength = length
+    val length get() = sourceLength
+    var lengthKnown = true
+        private set
+    private class Patch { val data = ByteArray(4096); val original = ByteArray(4096); val changed = java.util.BitSet(4096) }
     private val edits = TreeMap<Long, Patch>()
     private var changeCount = 0
-    private data class Edit(val offset: Long, val before: ByteArray, val after: ByteArray)
+    private data class Edit(val offset: Long, val before: ByteArray, val after: ByteArray, val original: ByteArray)
     private val undo = ArrayDeque<Edit>()
     private val redo = ArrayDeque<Edit>()
     val changedCount get() = changeCount
@@ -40,7 +44,16 @@ class HexDocument(private val source: PositionalReadable, val length: Long) {
         }
     }
     fun changedOffsets(start: Long, end: Long): Set<Long> = changedEntries(start, end).map { it.key }.toSet()
-    private fun put(offset: Long, value: Byte?) {
+    data class ByteChange(val offset: Long, val before: Byte, val after: Byte)
+    /** Only changed bytes and their first-observed originals, never a whole-file snapshot. */
+    fun byteChanges(): Sequence<ByteChange> = changedEntries().map {
+        ByteChange(it.key, edits.getValue(it.key / 4096).original[(it.key % 4096).toInt()], it.value)
+    }
+    fun restoreByteChange(offset: Long, before: Byte, after: Byte) {
+        require(offset >= 0 && offset < length && (changeCount < 1024 * 1024 || edits[offset / 4096]?.changed?.get((offset % 4096).toInt()) == true)) { "Invalid edit journal" }
+        if (before != after) put(offset, after, before)
+    }
+    private fun put(offset: Long, value: Byte?, original: Byte = 0) {
         val block = offset / 4096
         val i = (offset % 4096).toInt()
         val patch = edits[block] ?: if (value == null) return else {
@@ -52,6 +65,7 @@ class HexDocument(private val source: PositionalReadable, val length: Long) {
             if (wasChanged) { patch.changed.clear(i); changeCount-- }
             if (patch.changed.isEmpty) edits.remove(block)
         } else {
+            if (!wasChanged) patch.original[i] = original
             patch.data[i] = value; patch.changed.set(i)
             if (!wasChanged) changeCount++
         }
@@ -59,26 +73,32 @@ class HexDocument(private val source: PositionalReadable, val length: Long) {
 
     fun read(offset: Long, count: Int, patched: Boolean = true): ByteArray {
         require(offset in 0..length && count >= 0)
-        val data = ByteArray(minOf(count.toLong(), length - offset).toInt())
+        var data = ByteArray(minOf(count.toLong(), length - offset).toInt())
         var total = 0
         while (total < data.size) {
             checkCancelled()
             val n = source.readAt(offset + total, data, total, data.size - total)
-            if (n <= 0) throw EOFException("The source ended before offset ${offset + total}")
+            if (n <= 0) {
+                if (lengthKnown) throw EOFException("The source ended before offset ${offset + total}")
+                sourceLength = offset + total; lengthKnown = true; data = data.copyOf(total); break
+            }
             total += n
         }
-        if (patched && data.isNotEmpty()) {
+        overlay(data, offset, patched)
+        return data
+    }
+    private fun overlay(data: ByteArray, offset: Long, patched: Boolean) {
+        if (data.isNotEmpty()) {
             val end = offset + data.size
             for ((block, patch) in edits.subMap(offset / 4096, true, (end - 1) / 4096, true)) {
                 val base = block * 4096
                 var i = patch.changed.nextSetBit((offset - base).coerceAtLeast(0).toInt())
                 while (i >= 0 && i < 4096 && base + i < end) {
-                    data[(base + i - offset).toInt()] = patch.data[i]
+                    data[(base + i - offset).toInt()] = if (patched) patch.data[i] else patch.original[i]
                     i = patch.changed.nextSetBit(i + 1)
                 }
             }
         }
-        return data
     }
 
     fun overwrite(offset: Long, bytes: ByteArray) {
@@ -95,7 +115,8 @@ class HexDocument(private val source: PositionalReadable, val length: Long) {
     }
     private fun change(offset: Long, bytes: ByteArray) {
         require(offset >= 0 && offset <= length && bytes.size.toLong() <= length - offset) { "Replacement extends beyond the file" }
-        val before = read(offset, bytes.size)
+        val original = read(offset, bytes.size, patched = false)
+        val before = original.copyOf().also { overlay(it, offset, patched = true) }
         if (before.contentEquals(bytes)) return
         // Bound the sparse index as well as undo history, independently of file size.
         val replaced = changedEntries(offset, offset + bytes.size).count()
@@ -105,19 +126,18 @@ class HexDocument(private val source: PositionalReadable, val length: Long) {
         require(edits.size + lastBlock - firstBlock + 1 - edits.subMap(firstBlock, true, lastBlock, true).size <= 4096) {
             "Save before editing more than 4096 separate byte blocks"
         }
-        apply(offset, bytes)
-        undo.addLast(Edit(offset, before, bytes.copyOf()))
-        while (undo.size > 100 || undo.sumOf { it.before.size.toLong() + it.after.size } > 4L * 1024 * 1024) undo.removeFirst()
+        apply(offset, bytes, original)
+        undo.addLast(Edit(offset, before, bytes.copyOf(), original))
+        while (undo.size > 100 || undo.sumOf { it.before.size.toLong() + it.after.size + it.original.size } > 4L * 1024 * 1024) undo.removeFirst()
         redo.clear()
     }
-    private fun apply(offset: Long, data: ByteArray) {
-        val original = read(offset, data.size, patched = false)
+    private fun apply(offset: Long, data: ByteArray, original: ByteArray) {
         data.forEachIndexed { i, byte ->
-            put(offset + i, byte.takeUnless { it == original[i] })
+            put(offset + i, byte.takeUnless { it == original[i] }, original[i])
         }
     }
-    fun undo() { undo.removeLastOrNull()?.let { apply(it.offset, it.before); redo.addLast(it) } }
-    fun redo() { redo.removeLastOrNull()?.let { apply(it.offset, it.after); undo.addLast(it) } }
+    fun undo() { undo.removeLastOrNull()?.let { apply(it.offset, it.before, it.original); redo.addLast(it) } }
+    fun redo() { redo.removeLastOrNull()?.let { apply(it.offset, it.after, it.original); undo.addLast(it) } }
     fun restore(changes: Map<Long, Byte>) {
         require(changes.size <= 1024 * 1024 && changes.keys.all { it >= 0 && it < length }) { "Invalid edit draft" }
         restoreEntries(changes.entries.asSequence().map { it.key to it.value })
@@ -127,7 +147,7 @@ class HexDocument(private val source: PositionalReadable, val length: Long) {
         var count = 0
         for ((offset, byte) in changes) {
             require(offset >= 0 && offset < length && ++count <= 1024 * 1024) { "Invalid edit draft" }
-            put(offset, byte)
+            put(offset, byte, read(offset, 1, patched = false)[0])
         }
     }
 
@@ -145,7 +165,7 @@ class HexDocument(private val source: PositionalReadable, val length: Long) {
         }
         matched = 0
         var at = start
-        while (at < end) {
+        while (at < minOf(end, length)) {
             checkCancelled(cancelled)
             val data = read(at, minOf(65536L, end - at).toInt())
             for (i in data.indices) {
@@ -175,7 +195,7 @@ class HexDocument(private val source: PositionalReadable, val length: Long) {
         val hash = java.security.MessageDigest.getInstance("SHA-256")
         var sum = 0
         var at = start
-        while (at < end) {
+        while (at < minOf(end, length)) {
             checkCancelled(cancelled)
             val bytes = read(at, minOf(65536L, end - at).toInt())
             bytes.forEach { sum = (sum + (it.toInt() and 255)) and 255 }
@@ -185,6 +205,8 @@ class HexDocument(private val source: PositionalReadable, val length: Long) {
         return Checksums(sum, crc.value, hash.digest().joinToString("") { "%02x".format(it) })
     }
     companion object {
+        fun sequential(source: PositionalReadable, length: Long?): HexDocument =
+            HexDocument(source, length ?: Long.MAX_VALUE).apply { lengthKnown = length != null }
         private fun checkCancelled(cancelled: () -> Boolean = { false }) {
             if (Thread.currentThread().isInterrupted || cancelled()) throw InterruptedIOException("Cancelled")
         }

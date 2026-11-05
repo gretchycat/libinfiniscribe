@@ -143,3 +143,15 @@ Vault/Scribe classes and Android XML behavior, including related resources and
 nested ZIP input. WebView layout, linked images/styles, navigation, theme/font
 controls and live remote opening require handset acceptance. Synthetic EPUB 2/3,
 fallback and invalid books are under the application's document fixtures.
+
+## Binary windows and sparse original bytes
+
+`BinaryChunkReader` reuses `DocumentByteChunks` (eight 16 KiB blocks), reads
+forward-only sources sequentially and exposes only retained offsets for backward
+navigation. It never stages a file or advertises the source as random access.
+`HexDocument.sequential` discovers unknown EOF without an unbounded scan at open.
+`HexDocument.byteChanges` exposes each changed byte's first-observed original and
+replacement for durable journals; `restoreByteChange` restores these without
+rereading original source offsets. Undo/redo keeps bounded original data so it can
+apply edits after a sequential source's viewport block has been evicted. Storage
+journals, writable handles, recovery and publication belong to Store/the host.

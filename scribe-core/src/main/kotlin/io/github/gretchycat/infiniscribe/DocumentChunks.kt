@@ -18,6 +18,9 @@ internal class DocumentByteChunks(private val source: ByteSource, private val ca
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, ByteArray>?) = size > 8
     }
     private var sequentialPosition = 0L
+    val bufferedEnd get() = sequentialPosition
+    val bufferedStart get() = cache.keys.minOrNull() ?: sequentialPosition
+    fun bufferedBlocks(): Set<Long> = cache.keys.toSet()
     private var closed = false
     fun canRead(position: Long) = positional != null || position >= sequentialPosition || cache.containsKey(position / blockSize * blockSize)
     fun byteAt(position: Long): Int {
@@ -59,6 +62,32 @@ internal class DocumentByteChunks(private val source: ByteSource, private val ca
         return out.copyOf(count)
     }
     override fun close() { if (!closed) { closed = true; cache.clear(); if (ownsSource) source.close() } }
+}
+
+/** Binary windows share the text/table readers' eight-block (128 KiB) memory cache.
+ * A forward-only input may revisit retained bytes, but cannot seek to evicted or
+ * not-yet-read positions. readAt here addresses the window, not the source. */
+class BinaryChunkReader(source: ByteSource, cancellation: CancellationToken = CancellationToken.NONE,
+    ownsSource: Boolean = true) : PositionalReadable, Closeable {
+    private val chunks = DocumentByteChunks(source, cancellation, ownsSource)
+    private data class Window(val start: Long = 0, val end: Long = 0, val blocks: Set<Long> = emptySet())
+    @Volatile private var window = Window()
+    val supportsRandomAccess get() = chunks.positional != null
+    val bufferedStart get() = window.start
+    val bufferedEnd get() = window.end
+    fun canRead(position: Long): Boolean = supportsRandomAccess ||
+        window.let { position == it.end || position < it.end && position / 16384 * 16384 in it.blocks }
+    override fun readAt(position: Long, buffer: ByteArray, offset: Int, length: Int): Int {
+        requireRange(position, buffer, offset, length)
+        if (length == 0) return 0
+        if (!canRead(position)) throw IOException("Sequential source: only buffered bytes can be revisited. Continue with Next; older bytes have left the 128 KiB buffer.")
+        try {
+            val bytes = chunks.bytes(position, length)
+            bytes.copyInto(buffer, offset)
+            return if (bytes.isEmpty()) -1 else bytes.size
+        } finally { window = Window(chunks.bufferedStart, chunks.bufferedEnd, chunks.bufferedBlocks()) }
+    }
+    override fun close() = chunks.close()
 }
 
 data class TextChunk(val document: TextDocument, val start: Long, val nextOffset: Long, val hasNext: Boolean)
