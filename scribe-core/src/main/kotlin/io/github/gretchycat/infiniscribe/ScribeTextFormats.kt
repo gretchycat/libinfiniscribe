@@ -24,7 +24,7 @@ object ScribeTextFormats {
         "scss", "ss", "tcc", "tcsh", "tk", "vb", "vbs", "xsd", "xsl", "xslt"
     )
     val TEXT_MIME_TYPES = setOf(
-        "text/x-ansi", "text/x-ascii-art", "text/x-diz", "text/x-nfo",
+        "text/plain", "text/x-ansi", "text/x-ascii-art", "text/x-diz", "text/x-nfo",
         "application/json", "application/xml", "application/x-yaml", "application/yaml",
         "application/javascript", "application/x-javascript", "application/x-sh",
         "application/x-csh", "application/x-python", "application/x-ruby",
