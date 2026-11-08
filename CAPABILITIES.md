@@ -1,6 +1,6 @@
 # Runtime capabilities — scribe
 
-Updated 2026-11-04.
+Updated 2026-11-07.
 
 ## Linked dependencies
 
@@ -25,8 +25,13 @@ Register a reading/spreadsheet/reparser handler in its own module provider. Read
 
 Queries retain overlapping handlers. Availability is separate from metadata-only
 identity. Resource probes are bounded/cancellable and can narrow operations; real
-API execution still validates input. Use existing Stream sources, positional I/O,
-owned outputs and typed processors; do not duplicate decoders in consumers.
+API execution still validates input. The plain-text handler also recognizes
+unassociated files from a bounded printable-content prefix. The file selector
+includes opaque MIME candidates so text files with uncommon suffixes can be chosen;
+InfiniScribe probes the referenced bytes before selecting a viewer, and declines
+binary-looking data. MIME and extension hints alone do not make an unknown file text.
+Use existing Stream sources, positional I/O, owned outputs and typed processors;
+do not duplicate decoders in consumers.
 
 ## Limits
 
@@ -44,6 +49,10 @@ gradle :scribe-core:test :scribe-reparse-api:test :scribe-reparse-xml:test :scri
 
 No browser process is required. Keep existing format regression suites; capability
 tests invoke actual services/parsers rather than scripted success responses.
+
+## New format modules
+
+New document, text, spreadsheet, font, and structured-text handlers must validate content with their parser or encoding checks, then expose source-derived metadata through `MetadataCapabilityHandler`. For text, encoding and decoded length are useful facts; for documents, report only parsed structure and fields. Follow the shared [Stream conformance rule](../libinfinistream/CAPABILITIES.md#format-module-validation-and-metadata-requirements).
 
 ## Host audit record
 
