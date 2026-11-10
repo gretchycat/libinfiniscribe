@@ -74,7 +74,7 @@ private class EpubCapabilityHandler : ServiceCapabilityHandler(
     override fun probe(context:CapabilityProbeContext):HandlerProbe {
         if(context.resource.source==null)return super.probe(context)
         return if(DocumentIdentification.epub(context.prefix())) HandlerProbe(MatchConfidence.VERIFIED,
-            setOf(Operations.IDENTIFY),"Stored EPUB mimetype entry validated",mapOf("mimeType" to "application/epub+zip"))
+            setOf(Operations.IDENTIFY, Operations.DECODE),"Stored EPUB mimetype entry validated",mapOf("mimeType" to "application/epub+zip"))
         else HandlerProbe(MatchConfidence.NONE,emptySet())
     }
 }

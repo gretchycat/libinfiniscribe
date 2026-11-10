@@ -21,10 +21,10 @@ object TableDocuments {
 
     /** Parse a decoded preview; original encoded bytes remain in the caller's TextDocument for revision checks. */
     fun parse(document: TextDocument, fileName: String = "", delimiter: Char? = null,
-        cancellation: CancellationToken = CancellationToken.NONE): TableDocument {
+        cancellation: CancellationToken = CancellationToken.NONE, preserveWhitespace: Boolean = false): TableDocument {
         cancellation.check()
         val selected = delimiter ?: DelimitedText.detectDelimiter(document.text, fileName)
-        val processor = TableParseProcessor(selected)
+        val processor = TableParseProcessor(selected, preserveWhitespace)
         val registry = ProcessorRegistry(listOf(processor.registration()))
         registry.openPipeline(TextDocumentHandle(document), parseDescriptor.outputs.single(),
             ProcessorOptions(cancellation = cancellation)).use { session ->
@@ -66,7 +66,7 @@ object TableDocuments {
         verification = if (source.attributes["complete"] == "false") Verification.PROVISIONAL else Verification.UNKNOWN)
 }
 
-class TableParseProcessor(private val delimiter: Char = ',') : StreamProcessor {
+class TableParseProcessor(private val delimiter: Char = ',', private val preserveWhitespace: Boolean = false) : StreamProcessor {
     override val descriptor = TableDocuments.parseDescriptor
     fun registration()=ProcessorRegistration(this) {inputs,_ ->
         mapOf("table" to listOf(TableDocuments.tableMetadata(inputs.getValue("text").single(),delimiter)))
@@ -75,7 +75,7 @@ class TableParseProcessor(private val delimiter: Char = ',') : StreamProcessor {
         if (options.mode != FlowMode.PULL || options.values.isNotEmpty()) throw IOException("Unsupported table parser options")
         val document = (inputs["text"]?.singleOrNull() as? TextDocumentHandle)?.document
             ?: throw IOException("One decoded text document is required")
-        val rows = DelimitedText.parseCsv(document.text, delimiter, options.cancellation)
+        val rows = DelimitedText.parseCsv(document.text, delimiter, options.cancellation, preserveWhitespace)
         val metadata = TableDocuments.tableMetadata(document.metadata, delimiter).let { metadata ->
             metadata.copy(attributes = metadata.attributes + mapOf("rowCount" to rows.size.toString(),
                 "columnCount" to (rows.maxOfOrNull { it.size } ?: 0).toString(), "complete" to (!document.hasMore).toString()),

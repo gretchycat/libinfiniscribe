@@ -6,28 +6,43 @@ import io.github.gretchycat.infinistream.CancellationToken
 object DelimitedText {
     fun detectDelimiter(sample: String, fileName: String = ""): Char {
         if (fileName.endsWith(".tsv", ignoreCase = true)) return '\t'
-        val firstLine = sample.lineSequence().firstOrNull() ?: return ','
-        val commaCount = firstLine.count { it == ',' }
-        val tabCount = firstLine.count { it == '\t' }
-        val semiCount = firstLine.count { it == ';' }
-        val pipeCount = firstLine.count { it == '|' }
-
+        val counts = mapOf(',' to 0, '\t' to 0, ';' to 0, '|' to 0).toMutableMap()
+        var quoted = false
+        var index = if (sample.startsWith('\uFEFF')) 1 else 0
+        while (index < sample.length) {
+            val char = sample[index]
+            if (char == '"') {
+                if (quoted && index + 1 < sample.length && sample[index + 1] == '"') index++
+                else quoted = !quoted
+            } else if ((char == '\r' || char == '\n') && !quoted) {
+                break
+            } else if (!quoted && char in counts) {
+                counts[char] = counts.getValue(char) + 1
+            }
+            index++
+        }
+        val commas = counts.getValue(',')
+        val tabs = counts.getValue('\t')
+        val semicolons = counts.getValue(';')
+        val pipes = counts.getValue('|')
         return when {
-            tabCount > commaCount && tabCount > semiCount -> '\t'
-            semiCount > commaCount && semiCount > tabCount -> ';'
-            pipeCount > commaCount && pipeCount > semiCount -> '|'
+            tabs > commas && tabs > semicolons -> '\t'
+            semicolons > commas && semicolons > tabs -> ';'
+            pipes > commas && pipes > semicolons -> '|'
             else -> ','
         }
     }
 
-    fun parseCsv(text: String, delim: Char = ',', cancellation: CancellationToken = CancellationToken.NONE): List<List<String>> {
+    fun parseCsv(text: String, delim: Char = ',', cancellation: CancellationToken = CancellationToken.NONE,
+        preserveWhitespace: Boolean = false): List<List<String>> {
         cancellation.check()
         val rows = mutableListOf<List<String>>()
         val currentRow = mutableListOf<String>()
         val currentField = StringBuilder()
         var insideQuotes = false
-        var i = 0
+        var i = if (text.startsWith('\uFEFF')) 1 else 0
         val len = text.length
+        fun fieldValue(): String = currentField.toString().let { if (preserveWhitespace) it else it.trim() }
 
         while (i < len) {
             if ((i and 4095) <= 1) cancellation.check()
@@ -42,12 +57,12 @@ object DelimitedText {
                     }
                 }
                 c == delim && !insideQuotes -> {
-                    currentRow.add(currentField.toString().trim())
+                    currentRow.add(fieldValue())
                     currentField.clear()
                 }
                 (c == '\r' || c == '\n') && !insideQuotes -> {
                     if (c == '\r' && i + 1 < len && text[i + 1] == '\n') i++ // Skip CRLF
-                    currentRow.add(currentField.toString().trim())
+                    currentRow.add(fieldValue())
                     currentField.clear()
                     if (currentRow.isNotEmpty() && currentRow.any { it.isNotEmpty() }) {
                         rows.add(currentRow.toList())
@@ -61,7 +76,7 @@ object DelimitedText {
             i++
         }
         if (currentField.isNotEmpty() || currentRow.isNotEmpty()) {
-            currentRow.add(currentField.toString().trim())
+            currentRow.add(fieldValue())
             rows.add(currentRow.toList())
         }
         return rows

@@ -209,10 +209,25 @@ data class TableChunk @JvmOverloads constructor(val table: TableDocument, val ro
     val nextOffset: Long, val nextRowIndex: Long, val hasNext: Boolean, val originalBytes: ByteArray?,
     val firstRowIndex: Long = rowIndices.firstOrNull() ?: nextRowIndex)
 
-/** UTF-8 CSV/TSV windows end at real record boundaries, including escaped quotes and quoted newlines. */
+/** CSV/TSV windows follow the detected text encoding and end at real record boundaries. */
 class TableChunkReader(source: ByteSource, private val fileName: String = "",
-    private val cancellation: CancellationToken = CancellationToken.NONE, ownsSource: Boolean = true) : Closeable {
+    private val cancellation: CancellationToken = CancellationToken.NONE, ownsSource: Boolean = true,
+    private val preserveWhitespace: Boolean = false) : Closeable {
     private val chunks = DocumentByteChunks(source, cancellation, ownsSource)
+    private val sourceCharset by lazy {
+        PlainTextIdentification.detect(chunks.bytes(0, 512))?.charset ?: Charsets.UTF_8
+    }
+    private val codeUnitWidth: Int get() = when (sourceCharset.name().uppercase()) {
+        "UTF-16LE", "UTF-16BE" -> 2
+        "UTF-32LE", "UTF-32BE" -> 4
+        else -> 1
+    }
+    private val bomLength: Int get() = when (sourceCharset.name().uppercase()) {
+        "UTF-8" -> if (chunks.bytes(0, 3).contentEquals(byteArrayOf(0xef.toByte(), 0xbb.toByte(), 0xbf.toByte()))) 3 else 0
+        "UTF-16LE", "UTF-16BE" -> 2
+        "UTF-32LE", "UTF-32BE" -> 4
+        else -> 0
+    }
     private var selectedDelimiter: Char? = null
     var firstRow: List<String>? = null
         private set
@@ -223,6 +238,20 @@ class TableChunkReader(source: ByteSource, private val fileName: String = "",
     val sourceMetadata get() = chunks.metadata
     val supportsRandomAccess get() = chunks.positional != null
     fun canRead(offset: Long) = chunks.canRead(offset)
+    private fun codeUnitAt(position: Long): Int {
+        if (codeUnitWidth == 1) return chunks.byteAt(position)
+        val bytes = chunks.bytes(position, codeUnitWidth)
+        if (bytes.size != codeUnitWidth) return -1
+        return when (sourceCharset.name().uppercase()) {
+            "UTF-16LE" -> (bytes[0].toInt() and 255) or ((bytes[1].toInt() and 255) shl 8)
+            "UTF-16BE" -> ((bytes[0].toInt() and 255) shl 8) or (bytes[1].toInt() and 255)
+            "UTF-32LE" -> java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN).int
+            "UTF-32BE" -> java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.BIG_ENDIAN).int
+            else -> -1
+        }
+    }
+    private fun codeUnitBefore(position: Long): Int = if (position < codeUnitWidth) -1
+        else codeUnitAt(position - codeUnitWidth)
     @Synchronized fun read(offset: Long = 0, firstRowIndex: Long = 0, maxRows: Int = 50,
         filter: String = "", maxScanBytes: Int = 64 * 1024): TableChunk {
         require(offset >= 0 && firstRowIndex >= 0 && maxRows in 1..500 && maxScanBytes in 1024..(1024 * 1024))
@@ -231,23 +260,30 @@ class TableChunkReader(source: ByteSource, private val fileName: String = "",
         val rows = mutableListOf<List<String>>(); val indices = mutableListOf<Long>()
         val original = if (offset == 0L) ByteArrayOutputStream() else null
         var position = offset; var rowIndex = firstRowIndex
-        while (rows.size < maxRows && position - offset < maxScanBytes && chunks.byteAt(position) != -1) {
+        if (offset == 0L && bomLength > 0) {
+            original?.write(chunks.bytes(0, bomLength))
+            position = bomLength.toLong()
+        }
+        while (rows.size < maxRows && position - offset < maxScanBytes && codeUnitAt(position) != -1) {
             val record = ByteArrayOutputStream(); var quoted = false
             while (true) {
-                val b = chunks.byteAt(position)
+                val b = codeUnitAt(position)
                 if (b < 0) break
-                record.write(b); position++
+                record.write(chunks.bytes(position, codeUnitWidth))
+                position += codeUnitWidth
                 if (b == 34) quoted = !quoted
                 if (!quoted && (b == 13 || b == 10)) {
-                    if (b == 13 && chunks.byteAt(position) == 10) { record.write(10); position++ }
+                    if (b == 13 && codeUnitAt(position) == 10) {
+                        record.write(chunks.bytes(position, codeUnitWidth)); position += codeUnitWidth
+                    }
                     break
                 }
                 if (record.size() >= 8 * 1024 * 1024) throw IOException("A CSV record exceeds the existing 8 MiB document budget")
             }
             val bytes = record.toByteArray(); original?.write(bytes)
-            val text = String(bytes, Charsets.UTF_8)
+            val text = String(bytes, sourceCharset).removePrefix("\uFEFF")
             if (selectedDelimiter == null) selectedDelimiter = DelimitedText.detectDelimiter(text, fileName)
-            for (row in DelimitedText.parseCsv(text, selectedDelimiter!!, cancellation)) {
+            for (row in DelimitedText.parseCsv(text, selectedDelimiter!!, cancellation, preserveWhitespace)) {
                 if (rowIndex == 0L) firstRow = row
                 if (rowIndex == 0L || filter.isEmpty() || row.any { it.contains(filter, ignoreCase = true) }) {
                     rows += row; indices += rowIndex
@@ -255,12 +291,12 @@ class TableChunkReader(source: ByteSource, private val fileName: String = "",
                 rowIndex++
             }
         }
-        val more = chunks.byteAt(position) != -1
+        val more = codeUnitAt(position) != -1
         val whole = offset == 0L && !more && filter.isEmpty()
         val delimiter = selectedDelimiter ?: DelimitedText.detectDelimiter("", fileName)
         val source = sourceMetadata
         val metadata = TableDocuments.tableMetadata(source, delimiter).copy(
-            attributes = mapOf("storage" to "table-document", "complete" to whole.toString(), "sourceCharset" to "UTF-8",
+            attributes = mapOf("storage" to "table-document", "complete" to whole.toString(), "sourceCharset" to sourceCharset.name(),
                 "sourceOffset" to offset.toString(), "nextOffset" to position.toString(), "rowCount" to rows.size.toString(),
                 "columnCount" to (rows.maxOfOrNull { it.size } ?: 0).toString(), "delimiter" to delimiter.toString(),
                 "access" to if (supportsRandomAccess) "positional" else "sequential"),
@@ -282,18 +318,20 @@ class TableChunkReader(source: ByteSource, private val fileName: String = "",
         while (position > 0 && records.size < maxRows && beforeOffset - position < 64 * 1024) {
             cancellation.check()
             var cursor = position
-            if (chunks.byteAt(cursor - 1) == 10) { cursor--; if (cursor > 0 && chunks.byteAt(cursor - 1) == 13) cursor-- }
-            else if (chunks.byteAt(cursor - 1) == 13) cursor--
+            val width = codeUnitWidth.toLong()
+            if (codeUnitBefore(cursor) == 10) { cursor -= width; if (cursor > 0 && codeUnitBefore(cursor) == 13) cursor -= width }
+            else if (codeUnitBefore(cursor) == 13) cursor -= width
             var quoted = false
             while (cursor > 0) {
-                val b = chunks.byteAt(cursor - 1)
+                val b = codeUnitBefore(cursor)
                 if (b == 34) quoted = !quoted
                 if (!quoted && (b == 10 || b == 13)) break
-                cursor--
+                cursor -= width
                 if (position - cursor > 8L * 1024 * 1024) throw IOException("A CSV record exceeds the existing 8 MiB document budget")
             }
             val bytes = chunks.bytes(cursor, (position - cursor).toInt())
-            val parsed = DelimitedText.parseCsv(String(bytes, Charsets.UTF_8), delimiter, cancellation)
+            val parsed = DelimitedText.parseCsv(String(bytes, sourceCharset).removePrefix("\uFEFF"), delimiter, cancellation,
+                preserveWhitespace)
             rowIndex -= parsed.size
             if (rowIndex < 0) throw IOException("CSV record cursor no longer matches the source")
             parsed.forEachIndexed { index, row ->
@@ -304,10 +342,10 @@ class TableChunkReader(source: ByteSource, private val fileName: String = "",
             position = cursor
         }
         val rows = records.map { it.second }; val source = sourceMetadata
-        val more = chunks.byteAt(beforeOffset) != -1
+        val more = codeUnitAt(beforeOffset) != -1
         val whole = position == 0L && !more && filter.isEmpty()
         val metadata = TableDocuments.tableMetadata(source, delimiter).copy(
-            attributes = mapOf("storage" to "table-document", "complete" to whole.toString(), "sourceCharset" to "UTF-8",
+            attributes = mapOf("storage" to "table-document", "complete" to whole.toString(), "sourceCharset" to sourceCharset.name(),
                 "sourceOffset" to position.toString(), "nextOffset" to beforeOffset.toString(), "rowCount" to rows.size.toString(),
                 "columnCount" to (rows.maxOfOrNull { it.size } ?: 0).toString(), "delimiter" to delimiter.toString(),
                 "access" to if (supportsRandomAccess) "positional" else "sequential"),
