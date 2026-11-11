@@ -24,6 +24,7 @@ val dependencyRoot = System.getProperty("infini.dependencies")?.let(::file) ?: f
 System.setProperty("infini.dependencies", dependencyRoot.canonicalPath)
 includeBuild(dependencyRoot.resolve("libinfinistream"))
 include(":scribe-rtf", ":scribe-poi", ":scribe-office", ":scribe-core", ":scribe-reparse-api", ":scribe-reparse-yaml", ":scribe-reparse-xml", ":scribe-reparse-toml")
-if (!System.getenv("ANDROID_HOME").isNullOrBlank() || !System.getenv("ANDROID_SDK_ROOT").isNullOrBlank() ||
-    !System.getProperty("android.home").isNullOrBlank())
+// Android consumers must always see these coordinates. Portable-only selection
+// is explicit; an unset SDK must not silently remove published modules.
+if (!providers.gradleProperty("portableOnly").isPresent)
     include(":scribe-android", ":scribe-reparse-json-android", ":scribe-mobi-android")

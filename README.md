@@ -23,7 +23,7 @@ Runtime discovery: [handler schema, registration, linked dependencies and limits
 Structural extraction from gretchycat/infinifolder at 9233495.
 Implementation ownership and validation are recorded in SOURCE_PROVENANCE.md.
 
-Build the JVM module using JDK 17+ and Gradle 9.7.1: `gradle :scribe-core:build`. No Android SDK or runtime is required.
+Build the JVM module using JDK 17+ and Gradle 9.7.1: `./gradlew -PportableOnly :scribe-core:build`. No Android SDK or runtime is required.
 
 Source dependencies are pinned in `dependencies.lock.json` and fetched inside this checkout. No sibling source directories are used.
 
@@ -176,4 +176,4 @@ journals, writable handles, recovery and publication belong to Store/the host.
 
 ## Separation audit update
 
-The standard ZIP resource expansion helper required by document viewers is part of scribe-office. It has no dependency on Store or Vault. Android wrappers are included only when an Android SDK is configured; portable modules retain standalone JVM builds.
+The standard ZIP resource expansion helper required by document viewers is part of scribe-office. It has no dependency on Store or Vault. Android wrappers are included by default, independently of SDK discovery. Use `-PportableOnly` for SDK-free JVM builds; missing SDK configuration must not hide Android modules from composite consumers.
