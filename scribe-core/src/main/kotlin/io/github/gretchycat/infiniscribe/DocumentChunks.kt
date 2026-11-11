@@ -215,7 +215,9 @@ class TableChunkReader(source: ByteSource, private val fileName: String = "",
     private val preserveWhitespace: Boolean = false) : Closeable {
     private val chunks = DocumentByteChunks(source, cancellation, ownsSource)
     private val sourceCharset by lazy {
-        PlainTextIdentification.detect(chunks.bytes(0, 512))?.charset ?: Charsets.UTF_8
+        val prefix = chunks.bytes(0, 512)
+        val hasMore = chunks.metadata.length?.let { it > prefix.size } ?: (chunks.byteAt(prefix.size.toLong()) != -1)
+        PlainTextIdentification.detect(prefix, allowIncompleteTail = hasMore)?.charset ?: Charsets.UTF_8
     }
     private val codeUnitWidth: Int get() = when (sourceCharset.name().uppercase()) {
         "UTF-16LE", "UTF-16BE" -> 2

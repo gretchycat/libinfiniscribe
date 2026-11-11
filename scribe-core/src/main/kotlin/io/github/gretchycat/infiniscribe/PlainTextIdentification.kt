@@ -21,7 +21,10 @@ object PlainTextIdentification {
     )
 
     /** Returns null for binary-looking data. It reads only the caller's bounded prefix. */
-    fun detect(prefix: ByteArray): Result? {
+    fun detect(prefix: ByteArray): Result? = detect(prefix, allowIncompleteTail = false)
+
+    /** A bounded prefix may end within a Unicode character; malformed interior bytes still fail. */
+    fun detect(prefix: ByteArray, allowIncompleteTail: Boolean): Result? {
         if (binarySignatures.any { signature -> prefix.size >= signature.size &&
                 signature.indices.all { prefix[it] == signature[it] } }) return null
         if (prefix.any { it == 0.toByte() }) {
@@ -33,38 +36,49 @@ object PlainTextIdentification {
                 prefix.startsWith(byteArrayOf(0xfe.toByte(), 0xff.toByte())) -> Charsets.UTF_16BE
                 else -> null
             } ?: return null
-            return if (isReadable(prefix, charset, skipBom = true)) Result(charset, "Unicode BOM") else null
+            return if (isReadable(prefix, charset, skipBom = true, allowIncompleteTail = allowIncompleteTail)) Result(charset, "Unicode BOM") else null
         }
 
         val utf8Bom = prefix.startsWith(byteArrayOf(0xef.toByte(), 0xbb.toByte(), 0xbf.toByte()))
-        if ((utf8Bom || validUtf8(prefix)) && isReadable(prefix, Charsets.UTF_8, skipBom = utf8Bom)) {
+        if ((utf8Bom || validUtf8(prefix, allowIncompleteTail)) && isReadable(prefix, Charsets.UTF_8, skipBom = utf8Bom, allowIncompleteTail = allowIncompleteTail)) {
             return Result(Charsets.UTF_8, if (utf8Bom) "UTF-8 BOM" else "valid UTF-8/ASCII text")
         }
         val cp437 = DosTextEncoding.cp437
         return if (isReadable(prefix, cp437)) Result(cp437, "printable CP437 text") else null
     }
 
-    private fun validUtf8(bytes: ByteArray): Boolean = try {
-        Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
-            .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes))
+    private fun validUtf8(bytes: ByteArray, allowIncompleteTail: Boolean): Boolean = try {
+        decode(bytes, Charsets.UTF_8, 0, allowIncompleteTail)
         true
     } catch (_: Exception) { false }
 
-    private fun isReadable(bytes: ByteArray, charset: Charset, skipBom: Boolean = false): Boolean = try {
+    private fun isReadable(bytes: ByteArray, charset: Charset, skipBom: Boolean = false,
+        allowIncompleteTail: Boolean = false): Boolean = try {
         val start = if (!skipBom) 0 else when (charset.name().uppercase()) {
             "UTF-8" -> 3
             "UTF-16LE", "UTF-16BE" -> 2
             "UTF-32LE", "UTF-32BE" -> 4
             else -> 0
         }
-        val decoded = charset.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
-            .onUnmappableCharacter(CodingErrorAction.REPORT)
-            .decode(ByteBuffer.wrap(bytes, start.coerceAtMost(bytes.size), bytes.size - start.coerceAtMost(bytes.size)))
+        val decoded = decode(bytes, charset, start.coerceAtMost(bytes.size), allowIncompleteTail)
         decoded.toString().codePoints().allMatch { cp ->
             val char = cp.toChar()
             !Character.isISOControl(cp) || char in allowedControls || cp == 0x1a
         }
     } catch (_: Exception) { false }
+
+    private fun decode(bytes: ByteArray, charset: Charset, start: Int,
+        allowIncompleteTail: Boolean): java.nio.CharBuffer {
+        val decoder = charset.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT)
+        val input = ByteBuffer.wrap(bytes, start, bytes.size - start)
+        if (!allowIncompleteTail) return decoder.decode(input)
+        val output = java.nio.CharBuffer.allocate(bytes.size)
+        val result = decoder.decode(input, output, false)
+        if (result.isError) result.throwException()
+        output.flip()
+        return output
+    }
 
     private fun charsetOrNull(name: String): Charset? = runCatching { Charset.forName(name) }.getOrNull()
 

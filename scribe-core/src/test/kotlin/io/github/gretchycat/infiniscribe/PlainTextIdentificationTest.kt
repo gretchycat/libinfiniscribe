@@ -44,6 +44,15 @@ class PlainTextIdentificationTest {
             .none { it.descriptor.id == "scribe.text.content" })
     }
 
+    @Test fun partialUnicodeCharacterAtSampleBoundaryDoesNotSelectLegacyEncoding() {
+        val complete = "alpha 🎵 é".toByteArray()
+        val prefix = complete.copyOf(complete.size - 1)
+        assertEquals(Charsets.UTF_8, PlainTextIdentification.detect(prefix, allowIncompleteTail = true)?.charset)
+        assertNotEquals(Charsets.UTF_8, PlainTextIdentification.detect(prefix)?.charset)
+        assertNotEquals(Charsets.UTF_8, PlainTextIdentification.detect(byteArrayOf(0xc3.toByte(), 0x28, 0x41),
+            allowIncompleteTail = true)?.charset)
+    }
+
     private fun probe(name: String, mime: String, bytes: ByteArray) =
         probeOrNull(name, mime, bytes) ?: fail("Expected a text content match").let { error("unreachable") }
 
