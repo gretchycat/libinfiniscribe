@@ -39,6 +39,15 @@ object PdfDocuments {
 class PdfDocument internal constructor(private val renderer: PdfRenderer, input: StreamMetadata) : StreamHandle {
     val pageCount: Int = renderer.pageCount
     private var closed = false
+
+    /** Page dimensions in PDF points without rasterizing the page. */
+    @Synchronized
+    fun pageSize(index: Int): Pair<Int, Int> {
+        check(!closed) { "PDF document is closed" }
+        require(index in 0 until pageCount) { "Page index out of range: $index" }
+        checkCancellation()
+        return renderer.openPage(index).use { it.width to it.height }
+    }
     override val metadata = StreamMetadata(ContentType(DataKind.STRUCTURED, "application/pdf", "pdf-pages"),
         name = input.name, finiteness = Finiteness.FINITE, ownership = Ownership.OWNED,
         attributes = mapOf("pageCount" to pageCount.toString(), "backend" to "android-pdf-renderer"),
