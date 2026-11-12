@@ -9,6 +9,9 @@ class CoreScribeCapabilityProvider : CapabilityProvider {
     override fun handlers(): List<CapabilityHandler> = listOf(
         PlainTextContentHandler(),
         text("text", FormatSupport(ScribeTextFormats.TEXT_MIME_TYPES + setOf("text/*", "image/x-ansi"), ScribeTextFormats.TEXT_EXTENSIONS), "text"),
+        sourceText("ansi", FormatSupport(setOf("text/x-ansi", "image/x-ansi", "text/x-ascii-art"), setOf("ans", "ansi", "asc")), "ansi"),
+        sourceText("xpm", FormatSupport(setOf("image/x-xpixmap"), setOf("xpm")), "plain"),
+        sourceText("xcf", FormatSupport(setOf("image/x-xcf"), setOf("xcf")), "plain"),
         text("markdown", FormatSupport(setOf("text/markdown"), ScribeTextFormats.MARKDOWN_EXTENSIONS), "markdown"),
         text("html", FormatSupport(setOf("text/html","application/xhtml+xml"), ScribeTextFormats.HTML_EXTENSIONS), "html"),
         ServiceCapabilityHandler(HandlerDescriptor("scribe.table",library,"Delimited text",
@@ -29,6 +32,12 @@ class CoreScribeCapabilityProvider : CapabilityProvider {
         HandlerDescriptor("scribe.$id",library,id,listOf(format),setOf(Operations.DECODE),
             metadata=setOf("text","charset","encodedBytes","completeness"),limitations=listOf("4 MiB default complete-document limit; incomplete preview cannot be saved"),
             priority=if(id=="text")0 else 10,attributes=mapOf("presentation" to presentation)),TextDecodeProcessor().registration())
+
+    private fun sourceText(id:String,format:FormatSupport,sourceMode:String) = ProcessorCapabilityHandler(
+        HandlerDescriptor("scribe.source.$id",library,"$id plain source",listOf(format),setOf(Operations.DECODE),
+            metadata=setOf("text","charset","encodedBytes","completeness"),
+            limitations=listOf("Explicit unparsed source view; rendering or format validation is not provided"),
+            attributes=mapOf("presentation" to "text","sourceMode" to sourceMode)),TextDecodeProcessor().registration())
 }
 
 /** Fallback for unassociated files. Extension and MIME remain hints; content must look like text. */

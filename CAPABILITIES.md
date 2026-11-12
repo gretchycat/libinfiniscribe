@@ -1,6 +1,6 @@
 # Runtime capabilities — scribe
 
-Updated 2026-11-07.
+Updated 2026-11-12.
 
 ## Linked dependencies
 
@@ -32,6 +32,13 @@ InfiniScribe probes the referenced bytes before selecting a viewer, and declines
 binary-looking data. MIME and extension hints alone do not make an unknown file text.
 Use existing Stream sources, positional I/O, owned outputs and typed processors;
 do not duplicate decoders in consumers.
+
+The `scribe.source.ansi`, `scribe.source.xpm` and `scribe.source.xcf` handlers
+advertise explicit unparsed text-view alternatives while retaining each format's
+normal MIME identity. ANSI source is marked with `sourceMode=ansi` so the text
+viewer can preserve escape sequences visibly; XPM and XCF alternatives use
+`sourceMode=plain`. These handlers provide a backup presentation, not image
+decoding or format validation.
 
 ## Limits
 
